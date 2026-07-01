@@ -1,10 +1,17 @@
-name: Deploy Dockerized 3-Tier Todo App
+name: Dev Build, Test, and Deploy Todo App
 
 on:
   push:
     branches:
       - dev
-      - main
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - "terraform/**"
+      - ".github/workflows/deploy.yml"
+  pull_request:
+    branches:
+      - dev
     paths:
       - "frontend/**"
       - "backend/**"
@@ -26,24 +33,29 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: todo-3tier-dev-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   PROJECT_NAME: ${{ vars.PROJECT_NAME }}
-  ENVIRONMENT: ${{ vars.ENVIRONMENT }}
+  ENVIRONMENT: dev
   BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
   TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION }}
   TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
   IMAGE_TAG: latest
+
   TF_VAR_aws_region: ${{ vars.AWS_REGION }}
   TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
-  TF_VAR_environment: ${{ vars.ENVIRONMENT }}
+  TF_VAR_environment: dev
   TF_VAR_image_tag: latest
   TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
   TF_VAR_allowed_ssh_cidr: ${{ vars.ALLOWED_SSH_CIDR }}
 
 jobs:
-  terraform:
-    name: Build Images and Deploy Infrastructure
+  validate:
+    name: Dev Validate
     runs-on: ubuntu-latest
 
     steps:
@@ -56,11 +68,11 @@ jobs:
           REQUIRED_VARS=(
             "AWS_REGION"
             "PROJECT_NAME"
-            "ENVIRONMENT"
             "BOOTSTRAP_ROLE_ARN"
             "TERRAFORM_VERSION"
             "TF_STATE_BUCKET"
             "TF_VAR_db_password"
+            "TF_VAR_allowed_ssh_cidr"
           )
 
           for VAR_NAME in "${REQUIRED_VARS[@]}"; do
@@ -104,37 +116,55 @@ jobs:
         working-directory: terraform
         run: terraform validate
 
-      - name: Resolve Terraform Action
-        id: resolve
-        shell: bash
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            ACTION="${{ github.event.inputs.terraform_action }}"
-          elif [[ "${{ github.ref_name }}" == "dev" || "${{ github.ref_name }}" == "main" ]]; then
-            ACTION="apply"
-          else
-            ACTION="plan"
-          fi
-          echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
-          echo "Terraform action: ${ACTION}"
-
-      - name: Terraform Plan
-        if: steps.resolve.outputs.action == 'plan'
+      - name: Terraform Plan For Pull Request
+        if: github.event_name == 'pull_request'
         working-directory: terraform
         run: terraform plan -out=tfplan
 
-      - name: Create or Update ECR Repositories First
-        if: steps.resolve.outputs.action == 'apply'
+  dev-build:
+    name: Dev Build Docker Images
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name != 'pull_request'
+
+    outputs:
+      frontend_image: ${{ steps.image.outputs.frontend_image }}
+      backend_image: ${{ steps.image.outputs.backend_image }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${PROJECT_NAME}/${ENVIRONMENT}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Create or Update ECR Repositories
         working-directory: terraform
         run: terraform apply -target=module.ecr -auto-approve
 
       - name: Login to Amazon ECR
-        if: steps.resolve.outputs.action == 'apply'
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and Push Docker Images
-        if: steps.resolve.outputs.action == 'apply'
+        id: image
         shell: bash
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -155,6 +185,95 @@ jobs:
           docker push "${FRONTEND_IMAGE_SHA}"
           docker push "${BACKEND_IMAGE_LATEST}"
           docker push "${BACKEND_IMAGE_SHA}"
+
+          echo "frontend_image=${FRONTEND_IMAGE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "backend_image=${BACKEND_IMAGE_SHA}" >> "$GITHUB_OUTPUT"
+
+  dev-test:
+    name: Dev Test
+    runs-on: ubuntu-latest
+    needs: dev-build
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test Frontend Docker Image
+        shell: bash
+        run: |
+          docker run -d --name todo-frontend-test -p 8080:80 "${{ needs.dev-build.outputs.frontend_image }}"
+          sleep 10
+          curl -f http://localhost:8080 || (docker logs todo-frontend-test && exit 1)
+          docker rm -f todo-frontend-test
+
+      - name: Test Backend Docker Image
+        shell: bash
+        run: |
+          docker run -d --name todo-backend-test -p 8000:8000 \
+            -e DB_HOST="localhost" \
+            -e DB_PORT="3306" \
+            -e DB_NAME="todoapp" \
+            -e DB_USER="todo_admin" \
+            -e DB_PASSWORD="test-password" \
+            "${{ needs.dev-build.outputs.backend_image }}"
+
+          sleep 10
+          curl -f http://localhost:8000/health || (docker logs todo-backend-test && exit 1)
+          docker rm -f todo-backend-test
+
+  dev-deploy:
+    name: Dev Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs:
+      - validate
+      - dev-build
+      - dev-test
+    if: github.event_name != 'pull_request'
+    environment: dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${PROJECT_NAME}/${ENVIRONMENT}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Resolve Terraform Action
+        id: resolve
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ACTION="${{ github.event.inputs.terraform_action }}"
+          else
+            ACTION="apply"
+          fi
+
+          echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
+          echo "Terraform action: ${ACTION}"
+
+      - name: Terraform Plan
+        if: steps.resolve.outputs.action == 'plan'
+        working-directory: terraform
+        run: terraform plan -out=tfplan
 
       - name: Terraform Apply Full Stack
         if: steps.resolve.outputs.action == 'apply'
