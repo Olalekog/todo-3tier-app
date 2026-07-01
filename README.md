@@ -29,6 +29,201 @@ This simplified version does **not** use:
 - Application-created KMS key
 - DynamoDB state locking
 
+
+## Diagram Flow Overview
+
+This repository includes three diagram assets in the `assets/` folder. These diagrams are referenced directly in this README and can also be opened separately from GitHub.
+
+| Diagram | File | What It Shows |
+|---|---|---|
+| Architecture diagram | `assets/architecture-diagram.svg` | AWS 3-tier layout with public frontend EC2, private backend EC2, private RDS, ECR, S3 state, and GitHub Actions |
+| Deployment flow | `assets/deployment-flow.svg` | CI/CD path from GitHub push through dev validate, build, test, and deploy |
+| Request flow | `assets/request-flow.svg` | Browser request path through frontend Nginx proxy, FastAPI backend, and RDS MySQL |
+
+### Architecture Diagram Flow
+
+```text
+GitHub Actions
+  -> Assumes AWS OIDC IAM role
+  -> Builds Docker images
+  -> Pushes images to Amazon ECR
+  -> Runs Terraform using S3 remote state
+  -> Creates VPC, subnets, security groups, EC2, ECR, and RDS
+
+User Browser
+  -> Public Frontend EC2 :80
+  -> React app served by Nginx
+  -> /api traffic proxied to private Backend EC2 :8000
+  -> FastAPI reads/writes To-Do data
+  -> RDS MySQL :3306
+```
+
+![Architecture Diagram](assets/architecture-diagram.svg)
+
+### Deployment Pipeline Flow
+
+```text
+Developer pushes to dev branch
+  -> GitHub Actions starts
+  -> Dev Validate
+      -> Check required variables
+      -> Configure AWS OIDC credentials
+      -> Terraform fmt/init/validate
+  -> Dev Build
+      -> Ensure ECR repositories exist
+      -> Build frontend Docker image
+      -> Build backend Docker image
+      -> Push latest and Git SHA image tags
+  -> Dev Test
+      -> Login to ECR again because this is a new runner
+      -> Pull pushed images
+      -> Run frontend container locally
+      -> Run temporary MySQL test container
+      -> Run backend container locally
+      -> Test frontend and backend health endpoints
+  -> Dev Deploy
+      -> Terraform plan/apply
+      -> EC2 instances pull Docker images
+      -> Backend initializes database
+      -> Frontend serves the To-Do UI
+```
+
+![Deployment Flow](assets/deployment-flow.svg)
+
+### Application Request Flow
+
+```text
+1. User opens http://<frontend-public-ip>
+2. Frontend EC2 receives HTTP request on port 80
+3. Nginx serves React static files
+4. React calls /api/todos
+5. Nginx proxies /api traffic to backend private IP on port 8000
+6. FastAPI handles the request
+7. FastAPI connects to RDS MySQL on port 3306
+8. RDS returns To-Do data
+9. FastAPI returns JSON response
+10. React updates the browser UI
+```
+
+![Request Flow](assets/request-flow.svg)
+
+## Complete Repository and Terraform Structure
+
+```text
+todo-3tier-reusable-github-actions/
+├── .github/
+│   └── workflows/
+│       └── deploy.yml
+├── assets/
+│   ├── architecture-diagram.svg
+│   ├── deployment-flow.svg
+│   └── request-flow.svg
+├── backend/
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── main.py
+│   └── requirements.txt
+├── frontend/
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── index.html
+│   ├── package.json
+│   └── src/
+│       ├── App.jsx
+│       └── style.css
+├── docs/
+│   ├── architecture.md
+│   └── github-actions-iam-policy.json
+├── terraform/
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   ├── versions.tf
+│   ├── terraform.tfvars.example
+│   ├── backend-values.example.txt
+│   ├── modules/
+│   │   ├── network/
+│   │   │   ├── main.tf
+│   │   │   ├── variables.tf
+│   │   │   └── outputs.tf
+│   │   ├── security-groups/
+│   │   │   ├── main.tf
+│   │   │   ├── variables.tf
+│   │   │   └── outputs.tf
+│   │   ├── ecr/
+│   │   │   ├── main.tf
+│   │   │   ├── variables.tf
+│   │   │   └── outputs.tf
+│   │   ├── compute/
+│   │   │   ├── main.tf
+│   │   │   ├── variables.tf
+│   │   │   └── outputs.tf
+│   │   └── database/
+│   │       ├── main.tf
+│   │       ├── variables.tf
+│   │       └── outputs.tf
+│   └── templates/
+│       ├── user_data_frontend.sh.tftpl
+│       └── user_data_backend.sh.tftpl
+├── .gitignore
+└── README.md
+```
+
+### Terraform Root Module Flow
+
+The root Terraform files inside `terraform/` call the reusable modules and pass outputs from one module into another.
+
+```text
+terraform/main.tf
+  -> data.aws_availability_zones.available
+  -> data.aws_ami.ubuntu
+  -> module.network
+      -> creates VPC, public subnet, private app subnet, private DB subnets, IGW, NAT Gateway, route tables
+  -> module.security_groups
+      -> creates frontend, backend, and database security groups
+  -> module.ecr
+      -> creates frontend and backend ECR repositories
+  -> module.database
+      -> creates RDS subnet group and RDS MySQL database
+  -> module.compute
+      -> creates EC2 ECR pull role and instance profile
+      -> creates frontend public EC2 instance
+      -> creates backend private EC2 instance
+      -> injects Docker image URIs and RDS connection values into user data
+```
+
+### Terraform Module Dependency Flow
+
+```text
+network
+  -> outputs VPC ID, public subnet ID, private app subnet ID, DB subnet IDs
+
+security-groups
+  -> consumes VPC ID
+  -> outputs frontend SG, backend SG, database SG
+
+ecr
+  -> outputs frontend repository URL and backend repository URL
+
+database
+  -> consumes DB subnet IDs and database SG
+  -> outputs RDS endpoint, DB name, DB username
+
+compute
+  -> consumes subnet IDs, security groups, ECR image URIs, and RDS endpoint
+  -> outputs frontend public IP and backend private IP
+```
+
+### Module Purpose Summary
+
+| Terraform Module | Input Dependencies | Main Resources Created | Important Outputs |
+|---|---|---|---|
+| `network` | CIDR ranges, AZ list, project/environment names | VPC, subnets, IGW, NAT Gateway, route tables | VPC ID, subnet IDs |
+| `security-groups` | VPC ID, allowed SSH CIDR | Frontend SG, backend SG, database SG | Security group IDs |
+| `ecr` | Project name, environment | Frontend/backend ECR repositories | Repository URLs |
+| `database` | DB subnet IDs, DB SG, DB credentials | RDS subnet group, RDS MySQL | DB endpoint, DB name, username |
+| `compute` | Subnet IDs, SG IDs, image URIs, DB endpoint | IAM role, instance profile, frontend EC2, backend EC2 | Frontend public IP, backend private IP |
+
 ## High-Level Architecture
 
 ![Architecture Diagram](assets/architecture-diagram.svg)

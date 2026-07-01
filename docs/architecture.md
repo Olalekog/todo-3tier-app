@@ -1,48 +1,66 @@
-# Architecture and Deployment Flows
+# Architecture and Flow Documentation
 
-## Architecture Diagram
+## 1. High-Level Architecture
 
 ![Architecture Diagram](../assets/architecture-diagram.svg)
 
-## Deployment Flow
+```text
+GitHub Actions -> AWS OIDC role -> ECR + Terraform
+Terraform -> VPC + Subnets + SGs + EC2 + RDS
+Browser -> Public Frontend EC2 -> Private Backend EC2 -> Private RDS MySQL
+```
+
+## 2. Deployment Flow
 
 ![Deployment Flow](../assets/deployment-flow.svg)
 
-## Request Flow
+```text
+Push to dev
+  -> Dev Validate
+  -> Dev Build Docker Images
+  -> Dev Test Containers
+  -> Dev Deploy Terraform
+```
+
+## 3. Request Flow
 
 ![Request Flow](../assets/request-flow.svg)
 
-## Network Design
-
 ```text
-VPC
-├── Public subnet
-│   └── Frontend EC2 instance
-├── Private app subnet
-│   └── Backend EC2 instance
-└── Private DB subnets
-    └── RDS MySQL
+Browser
+  -> Frontend EC2 Public IP :80
+  -> Nginx React container
+  -> /api reverse proxy
+  -> Backend EC2 Private IP :8000
+  -> FastAPI container
+  -> RDS MySQL :3306
 ```
 
-## Security Group Flow
+## 4. Terraform Structure
 
 ```text
-Internet 0.0.0.0/0
-  -> Frontend SG :80
-
-Frontend SG
-  -> Backend SG :8000
-
-Backend SG
-  -> RDS SG :3306
+terraform/
+├── main.tf
+├── variables.tf
+├── outputs.tf
+├── versions.tf
+├── terraform.tfvars.example
+├── backend-values.example.txt
+├── modules/
+│   ├── network/
+│   ├── security-groups/
+│   ├── ecr/
+│   ├── compute/
+│   └── database/
+└── templates/
+    ├── user_data_frontend.sh.tftpl
+    └── user_data_backend.sh.tftpl
 ```
 
-## Pipeline Flow
+## 5. Terraform Module Flow
 
 ```text
-Git push to dev
-  -> Dev Validate
-  -> Dev Build Docker Images
-  -> Dev Test Docker Images
-  -> Dev Deploy Infrastructure
+network -> security-groups -> ecr -> database -> compute
 ```
+
+The `compute` module depends on outputs from the other modules because the EC2 instances need subnet IDs, security groups, Docker image URIs, and the RDS endpoint.
