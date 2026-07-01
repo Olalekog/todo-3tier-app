@@ -1,20 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520">
-  <defs>
-    <style>.title{font:700 26px Arial;fill:#172033}.box{fill:#fff;stroke:#98a2b3;stroke-width:2;rx:14}.tf{fill:#eff8ff;stroke:#2e90fa;stroke-width:2;rx:14}.docker{fill:#ecfdf3;stroke:#12b76a;stroke-width:2;rx:14}.aws{fill:#fff7ed;stroke:#f79009;stroke-width:2;rx:14}.h{font:700 16px Arial;fill:#111827}.t{font:400 13px Arial;fill:#344054}.arrow{stroke:#344054;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#344054"/></marker>
-  </defs>
-  <text x="40" y="50" class="title">GitHub Actions Deployment Flow</text>
-  <rect x="40" y="100" width="170" height="95" class="box"/><text x="65" y="135" class="h">Push / Manual Run</text><text x="65" y="160" class="t">dev or main branch</text>
-  <rect x="250" y="100" width="170" height="95" class="aws"/><text x="275" y="135" class="h">OIDC Login</text><text x="275" y="160" class="t">Assume AWS role</text>
-  <rect x="460" y="100" width="170" height="95" class="tf"/><text x="485" y="135" class="h">Terraform Init</text><text x="485" y="160" class="t">S3 state backend only</text>
-  <rect x="670" y="100" width="170" height="95" class="tf"/><text x="695" y="135" class="h">Create ECR</text><text x="695" y="160" class="t">terraform apply -target</text>
-  <rect x="880" y="100" width="170" height="95" class="docker"/><text x="905" y="135" class="h">Build Images</text><text x="905" y="160" class="t">Frontend + backend</text>
-
-  <rect x="250" y="285" width="170" height="95" class="docker"/><text x="275" y="320" class="h">Push to ECR</text><text x="275" y="345" class="t">latest and Git SHA</text>
-  <rect x="460" y="285" width="170" height="95" class="tf"/><text x="485" y="320" class="h">Apply Full Stack</text><text x="485" y="345" class="t">VPC, EC2, RDS</text>
-  <rect x="670" y="285" width="170" height="95" class="aws"/><text x="695" y="320" class="h">EC2 User Data</text><text x="695" y="345" class="t">Docker login + run</text>
-  <rect x="880" y="285" width="170" height="95" class="aws"/><text x="905" y="320" class="h">Application Live</text><text x="905" y="345" class="t">Frontend public IP</text>
-
-  <path class="arrow" d="M210 148 L250 148"/><path class="arrow" d="M420 148 L460 148"/><path class="arrow" d="M630 148 L670 148"/><path class="arrow" d="M840 148 L880 148"/>
-  <path class="arrow" d="M965 195 C965 240 335 240 335 285"/><path class="arrow" d="M420 333 L460 333"/><path class="arrow" d="M630 333 L670 333"/><path class="arrow" d="M840 333 L880 333"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="420" viewBox="0 0 1100 420">
+  <defs><style>.title{font:700 24px Arial;fill:#1f2937}.box{fill:#fff;stroke:#334155;stroke-width:2;rx:14}.stage{fill:#eff6ff}.test{fill:#ecfdf5}.deploy{fill:#fff7ed}.small{font:13px Arial;fill:#374151}.label{font:700 15px Arial;fill:#111827}.arrow{stroke:#111827;stroke-width:2.5;marker-end:url(#arrow)}</style><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#111827"/></marker></defs>
+  <text x="40" y="45" class="title">GitHub Actions Pipeline: Dev Build → Test → Deploy</text>
+  <rect x="55" y="95" width="185" height="145" class="box stage"/><text x="90" y="130" class="label">1. Dev Validate</text><text x="80" y="160" class="small">Terraform fmt</text><text x="80" y="182" class="small">Terraform init</text><text x="80" y="204" class="small">Terraform validate/plan</text>
+  <rect x="300" y="95" width="185" height="145" class="box stage"/><text x="340" y="130" class="label">2. Dev Build</text><text x="325" y="160" class="small">Create ECR repos</text><text x="325" y="182" class="small">Build frontend image</text><text x="325" y="204" class="small">Build backend image</text>
+  <rect x="545" y="95" width="185" height="145" class="box test"/><text x="595" y="130" class="label">3. Dev Test</text><text x="570" y="160" class="small">Login to ECR</text><text x="570" y="182" class="small">Pull images</text><text x="570" y="204" class="small">Test / and /health</text>
+  <rect x="790" y="95" width="185" height="145" class="box deploy"/><text x="835" y="130" class="label">4. Dev Deploy</text><text x="815" y="160" class="small">Terraform apply</text><text x="815" y="182" class="small">EC2 pulls images</text><text x="815" y="204" class="small">RDS seed data</text>
+  <path class="arrow" d="M240 168H300"/><path class="arrow" d="M485 168H545"/><path class="arrow" d="M730 168H790"/>
+  <rect x="90" y="300" width="880" height="55" class="box" fill="#f8fafc"/><text x="125" y="334" class="small">Authentication: GitHub OIDC assumes arn:aws:iam::866934333672:role/react-js-application-github-actions-bootstrap-role. Terraform backend uses S3 bucket only.</text>
 </svg>

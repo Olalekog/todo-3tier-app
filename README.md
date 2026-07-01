@@ -1,411 +1,158 @@
 # Dockerized To-Do 3-Tier Application on AWS
 
-This repository deploys a **simple Dockerized To-Do 3-tier application** on AWS using **reusable Terraform modules** and **GitHub Actions**.
+This repository deploys a simplified Dockerized 3-tier To-Do application on AWS using reusable Terraform modules and a GitHub Actions pipeline broken into **dev build**, **dev test**, and **dev deploy** stages.
 
-The deployment uses separate single instances for each application tier:
+The design intentionally avoids advanced production components so the infrastructure is easy to understand and troubleshoot.
 
-- **Frontend:** React JS packaged as a Docker image and deployed on one public EC2 instance.
-- **Backend:** FastAPI packaged as a Docker image and deployed on one private EC2 instance.
-- **Database:** RDS MySQL deployed in private DB subnets.
+## What This Project Deploys
 
-The design intentionally excludes **ALB, ASG, Route 53, ACM, Cognito, and app-created KMS**. ECR is included because the EC2 instances pull the frontend and backend Docker images from a private AWS registry.
+- React JS frontend packaged as a Docker image.
+- FastAPI backend packaged as a Docker image.
+- Frontend runs on a dedicated single EC2 instance in a public subnet.
+- Backend runs on a dedicated single EC2 instance in a private subnet.
+- RDS MySQL runs in private DB subnets.
+- ECR stores frontend and backend Docker images.
+- Terraform uses reusable modules.
+- GitHub Actions uses OIDC to assume an AWS IAM role.
+- Terraform state is stored in an existing S3 bucket.
+- FastAPI initializes the database and inserts a test To-Do item.
 
----
+## Excluded by Design
 
-## Architecture Diagram
+This simplified version does **not** use:
 
-![Dockerized To-Do 3-Tier Architecture](assets/architecture-diagram.svg)
+- ALB
+- ASG
+- Route 53
+- ACM
+- Cognito
+- Application-created KMS key
+- DynamoDB state locking
 
-```text
-User Browser
-   |
-   | HTTP :80
-   v
-Public Subnet
-Frontend EC2 Instance
-Docker container: React static build served by Nginx
-Nginx proxies /api requests
-   |
-   | Private traffic :8000
-   v
-Private App Subnet
-Backend EC2 Instance
-Docker container: FastAPI + Uvicorn
-   |
-   | Private traffic :3306
-   v
-Private DB Subnets
-RDS MySQL
-```
+## High-Level Architecture
 
----
+![Architecture Diagram](assets/architecture-diagram.svg)
 
-## Deployment Flow Diagram
+### Application Components
 
-![GitHub Actions Deployment Flow](assets/deployment-flow.svg)
-
-```mermaid
-flowchart LR
-    A[Developer pushes to dev/main] --> B[GitHub Actions starts]
-    B --> C[Assume AWS role using GitHub OIDC]
-    C --> D[Terraform init with S3 backend]
-    D --> E[Terraform validate]
-    E --> F[Create ECR repositories first]
-    F --> G[Build frontend Docker image]
-    F --> H[Build backend Docker image]
-    G --> I[Push frontend image to ECR]
-    H --> J[Push backend image to ECR]
-    I --> K[Terraform apply full stack]
-    J --> K
-    K --> L[EC2 user data pulls Docker images]
-    L --> M[Frontend and backend containers run]
-```
-
----
+| Layer | Service | Placement | Purpose |
+|---|---|---|---|
+| Frontend | React JS + Nginx container | Public EC2 instance | Serves web UI and proxies `/api` requests |
+| Backend | FastAPI container | Private EC2 instance | Handles To-Do API and database initialization |
+| Database | RDS MySQL | Private DB subnets | Stores To-Do records |
+| Container Registry | Amazon ECR | AWS regional service | Stores frontend and backend Docker images |
+| CI/CD | GitHub Actions | GitHub-hosted runner | Builds, tests, pushes images, and deploys Terraform |
+| State Backend | S3 | Existing bucket | Stores Terraform state |
 
 ## Application Request Flow
 
-![Application Request Flow](assets/request-flow.svg)
+![Request Flow](assets/request-flow.svg)
 
-```mermaid
-sequenceDiagram
-    participant User as User Browser
-    participant FE as Frontend EC2<br/>React + Nginx Docker
-    participant BE as Backend EC2<br/>FastAPI Docker
-    participant DB as RDS MySQL
-
-    User->>FE: HTTP GET /
-    FE-->>User: React frontend
-    User->>FE: HTTP GET /api/todos
-    FE->>BE: Proxy /api/todos to private backend:8000
-    BE->>DB: SELECT todos
-    DB-->>BE: To-Do records
-    BE-->>FE: JSON response
-    FE-->>User: To-Do list in browser
-```
-
----
-
-## High-Level Resource Design
-
-| Tier | AWS Resource | Subnet Type | Internet Facing | Runtime |
-|---|---|---|---|---|
-| Frontend | Single EC2 instance | Public subnet | Yes | Docker container from ECR |
-| Backend | Single EC2 instance | Private app subnet | No | Docker container from ECR |
-| Database | RDS MySQL | Private DB subnets | No | Managed database |
-| Image registry | Amazon ECR | AWS regional service | No direct public access | Stores Docker images |
-| Network egress | NAT Gateway | Public subnet | Outbound only | Allows private EC2 to pull images/packages |
-
-The frontend and backend are **not deployed on the same server**. They are two separate EC2 instances.
-
----
-
-## What This Deployment Creates
+Request path:
 
 ```text
-VPC
-Public subnet(s)
-Private app subnet(s)
-Private DB subnet(s)
-Internet Gateway
-NAT Gateway and Elastic IP
-Route tables and associations
-Security groups
-ECR frontend repository
-ECR backend repository
-Frontend EC2 instance
-Backend EC2 instance
-EC2 IAM role and instance profile for ECR image pull
-RDS MySQL database
-S3-only Terraform remote state configuration
+Browser
+  -> Frontend EC2 Public IP :80
+  -> Nginx serves React app
+  -> Nginx proxies /api requests
+  -> Backend EC2 Private IP :8000
+  -> FastAPI
+  -> RDS MySQL :3306
 ```
 
----
-
-## What Is Excluded
+Security group flow:
 
 ```text
-No ALB
-No ASG
-No Route 53
-No ACM
-No Cognito
-No app-created KMS key
-No DynamoDB state locking
-No Kubernetes
+Internet -> Frontend EC2 SG :80
+Frontend EC2 SG -> Backend EC2 SG :8000
+Backend EC2 SG -> RDS SG :3306
 ```
 
----
+## GitHub Actions Deployment Flow
 
-## Repository Structure
+![Deployment Flow](assets/deployment-flow.svg)
+
+The workflow is split into clear dev stages:
 
 ```text
-.
-├── .github
-│   └── workflows
-│       └── deploy.yml
-├── assets
-│   ├── architecture-diagram.svg
-│   ├── deployment-flow.svg
-│   └── request-flow.svg
-├── backend
-│   ├── Dockerfile
-│   ├── .dockerignore
-│   ├── main.py
-│   └── requirements.txt
-├── frontend
-│   ├── Dockerfile
-│   ├── .dockerignore
-│   ├── index.html
-│   ├── package.json
-│   └── src
-│       ├── App.jsx
-│       └── style.css
-├── terraform
-│   ├── main.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── versions.tf
-│   ├── terraform.tfvars.example
-│   ├── templates
-│   │   ├── user_data_frontend.sh.tftpl
-│   │   └── user_data_backend.sh.tftpl
-│   └── modules
-│       ├── network
-│       ├── security-groups
-│       ├── ecr
-│       ├── compute
-│       └── database
-└── docs
-    ├── architecture.md
-    └── github-actions-iam-policy.json
+Dev Validate
+  -> Dev Build Docker Images
+  -> Dev Test Docker Images
+  -> Dev Deploy Infrastructure
 ```
 
----
+### 1. Dev Validate
 
-## Terraform Module Design
-
-### `terraform/modules/network`
-
-Creates the network foundation:
+Runs basic Terraform checks before build/deploy:
 
 ```text
-VPC
-Internet Gateway
-Public subnets
-Private app subnets
-Private DB subnets
-NAT Gateway
-Public route table
-Private route table
-Route table associations
+Validate required GitHub variables
+Configure AWS credentials using GitHub OIDC
+Terraform fmt check
+Terraform init using S3 backend
+Terraform validate
+Terraform plan on pull request
 ```
 
-The private backend EC2 needs outbound access to pull Docker images from ECR. This simplified version uses a NAT Gateway for that outbound path.
+### 2. Dev Build Docker Images
 
-### `terraform/modules/security-groups`
-
-Creates the security groups and tier-to-tier rules:
+Builds and pushes the Docker images:
 
 ```text
-Internet -> Frontend EC2 :80
-Optional SSH CIDR -> Frontend EC2 :22
-Frontend EC2 -> Backend EC2 :8000
-Backend EC2 -> RDS MySQL :3306
-```
-
-### `terraform/modules/ecr`
-
-Creates two repositories:
-
-```text
-<project-name>/<environment>/todo-frontend
-<project-name>/<environment>/todo-backend
-```
-
-Example:
-
-```text
-todo-3tier-simple/dev/todo-frontend
-todo-3tier-simple/dev/todo-backend
-```
-
-### `terraform/modules/compute`
-
-Creates two separate EC2 instances:
-
-```text
-aws_instance.frontend
-aws_instance.backend
-```
-
-It also creates an EC2 IAM role and instance profile that allows the EC2 instances to pull Docker images from ECR.
-
-### `terraform/modules/database`
-
-Creates:
-
-```text
-RDS DB subnet group
-RDS MySQL database instance
-```
-
----
-
-## Docker Packaging
-
-### Frontend Docker Image
-
-The frontend image uses a multi-stage Docker build:
-
-```text
-Node.js stage builds the React app
-Nginx stage serves the compiled static files
-```
-
-At deployment time, the frontend EC2 runs the container on port `80`. Nginx proxies `/api` requests to the backend EC2 private IP on port `8000`.
-
-### Backend Docker Image
-
-The backend image runs:
-
-```text
-FastAPI
-Uvicorn
-MySQL connector
-```
-
-The backend EC2 runs the container on port `8000`. Database values are passed through Docker environment variables from EC2 user data.
-
----
-
-## Database Initialization
-
-FastAPI initializes the database on startup.
-
-It creates this table if it does not already exist:
-
-```sql
-CREATE TABLE IF NOT EXISTS todos (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    title VARCHAR(255) NOT NULL,
-    completed BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-It also inserts one test item automatically:
-
-```text
-Test To-Do item created during application initialization
-```
-
-The seed operation is idempotent, so the application does not duplicate the test item every time the backend restarts.
-
----
-
-## GitHub Actions Deployment Configuration
-
-Workflow file:
-
-```text
-.github/workflows/deploy.yml
-```
-
-The workflow uses GitHub OIDC to assume this AWS role:
-
-```text
-arn:aws:iam::866934333672:role/react-js-application-github-actions-bootstrap-role
-```
-
-### Workflow Behavior
-
-```text
-Pull/manual plan:
-terraform init
-terraform validate
-terraform plan
-
-Apply:
-terraform init
-terraform validate
-terraform apply -target=module.ecr
-Docker login to ECR
+Create/update ECR repositories
+Login to Amazon ECR
 Build frontend Docker image
 Build backend Docker image
-Push latest and Git SHA image tags
-terraform apply full stack
-Show Terraform outputs
+Push latest and Git SHA tags
 ```
 
-### Image Tags
+Image format:
 
-The workflow pushes two tags for each image:
+```text
+866934333672.dkr.ecr.us-east-1.amazonaws.com/todo-3tier-simple/dev/todo-frontend:<git-sha>
+866934333672.dkr.ecr.us-east-1.amazonaws.com/todo-3tier-simple/dev/todo-backend:<git-sha>
+```
+
+Also pushed as:
 
 ```text
 latest
-<git-sha>
 ```
 
-Terraform deploys the `latest` tag by default.
+### 3. Dev Test
 
----
+Because each GitHub Actions job runs on a new runner, this job logs in to ECR again before pulling images.
 
-## Required GitHub Repository Variables
-
-Add these under:
+Tests include:
 
 ```text
-GitHub repository -> Settings -> Secrets and variables -> Actions -> Variables
+Pull frontend image from ECR
+Run frontend container locally on port 8080
+Test frontend HTTP response
+Run temporary MySQL container
+Run backend container locally on port 8000
+Test backend /health endpoint
 ```
+
+### 4. Dev Deploy
+
+Deploys the AWS infrastructure and application runtime:
 
 ```text
-AWS_REGION=us-east-1
-PROJECT_NAME=todo-3tier-simple
-ENVIRONMENT=dev
-BOOTSTRAP_ROLE_ARN=arn:aws:iam::866934333672:role/react-js-application-github-actions-bootstrap-role
-TERRAFORM_VERSION=1.9.0
-TF_STATE_BUCKET=react-js-application-terraform-state-866934333672
-ALLOWED_SSH_CIDR=<your-public-ip>/32
+Terraform init with S3 backend
+Terraform plan
+Terraform apply
+Create VPC, subnets, NAT, SGs, EC2, ECR, and RDS
+Frontend EC2 pulls frontend image
+Backend EC2 pulls backend image
+FastAPI initializes RDS table and test data
 ```
-
-For a temporary open SSH test only, use:
-
-```text
-ALLOWED_SSH_CIDR=0.0.0.0/0
-```
-
-For better security, use your public IP:
-
-```text
-ALLOWED_SSH_CIDR=72.45.10.20/32
-```
-
----
-
-## Required GitHub Secret
-
-Add this under:
-
-```text
-GitHub repository -> Settings -> Secrets and variables -> Actions -> Secrets
-```
-
-```text
-DB_PASSWORD=<strong-rds-password>
-```
-
----
 
 ## Terraform Backend Configuration
 
-This project uses an existing S3 bucket for Terraform state:
+This project uses an existing S3 bucket for Terraform state.
 
-```text
-TF_STATE_BUCKET=react-js-application-terraform-state-866934333672
-```
-
-The workflow runs:
+The workflow uses:
 
 ```bash
 terraform init \
@@ -415,166 +162,223 @@ terraform init \
   -backend-config="encrypt=true"
 ```
 
-This package intentionally does **not** use:
+Required state bucket variable:
+
+```text
+TF_STATE_BUCKET=react-js-application-terraform-state-866934333672
+```
+
+Removed from this simplified project:
 
 ```text
 TF_LOCK_TABLE
 TF_STATE_KMS_KEY_ARN
 TF_STATE_KMS_KEY_ID
-DynamoDB backend locking
-KMS backend configuration
 ```
 
----
+## Required GitHub Repository Variables
 
-## Required AWS IAM Permissions for Deployment Role
-
-The GitHub Actions role must be able to create and manage this small stack. At minimum, it needs permissions for:
+Create these under:
 
 ```text
-ECR repository management and image push
-EC2 VPC, subnet, route, NAT, EIP, security group, and instance management
-IAM role and instance profile management for EC2 ECR pull
-RDS database and DB subnet group management
-S3 Terraform backend state read/write
+GitHub Repo -> Settings -> Secrets and variables -> Actions -> Variables
 ```
 
-The deployment role used by this project is:
+| Variable | Example Value |
+|---|---|
+| `AWS_REGION` | `us-east-1` |
+| `PROJECT_NAME` | `todo-3tier-simple` |
+| `ENVIRONMENT` | `dev` |
+| `BOOTSTRAP_ROLE_ARN` | `arn:aws:iam::866934333672:role/react-js-application-github-actions-bootstrap-role` |
+| `TERRAFORM_VERSION` | `1.9.0` |
+| `TF_STATE_BUCKET` | `react-js-application-terraform-state-866934333672` |
+| `ALLOWED_SSH_CIDR` | `<your-public-ip>/32` |
+
+For quick testing only, you can use:
 
 ```text
-react-js-application-github-actions-bootstrap-role
+ALLOWED_SSH_CIDR=0.0.0.0/0
 ```
 
-A starter IAM policy is included here:
+For better security, use your public IP with `/32`.
+
+## Required GitHub Secret
+
+Create this under:
+
+```text
+GitHub Repo -> Settings -> Secrets and variables -> Actions -> Secrets
+```
+
+| Secret | Purpose |
+|---|---|
+| `DB_PASSWORD` | RDS MySQL admin password |
+
+## AWS OIDC Role
+
+The workflow assumes this role:
+
+```text
+arn:aws:iam::866934333672:role/react-js-application-github-actions-bootstrap-role
+```
+
+The role must trust GitHub OIDC:
+
+```text
+arn:aws:iam::866934333672:oidc-provider/token.actions.githubusercontent.com
+```
+
+The workflow uses:
+
+```yaml
+permissions:
+  id-token: write
+  contents: read
+```
+
+## Required AWS Permissions for Deployment
+
+The GitHub Actions role needs permissions for:
+
+```text
+ECR repository creation and Docker image push
+EC2/VPC networking and instance deployment
+IAM EC2 instance role and instance profile creation
+RDS MySQL deployment
+S3 Terraform state read/write
+```
+
+A full IAM policy example is included here:
 
 ```text
 docs/github-actions-iam-policy.json
 ```
 
-Recent permissions required during deployment include:
-
-```text
-ecr:CreateRepository
-ecr:InitiateLayerUpload
-ecr:UploadLayerPart
-ecr:CompleteLayerUpload
-ecr:PutImage
-ecr:ListTagsForResource
-ec2:DescribeAvailabilityZones
-ec2:DescribeImages
-ec2:CreateVpc
-ec2:AllocateAddress
-ec2:DescribeVpcAttribute
-ec2:DescribeAddressesAttribute
-iam:CreateRole
-iam:CreateInstanceProfile
-iam:TagInstanceProfile
-iam:PassRole
-rds:CreateDBInstance
-```
-
----
-
-## Deployment Steps
-
-### 1. Add GitHub variables and secret
-
-Create the required variables and `DB_PASSWORD` secret listed above.
-
-### 2. Push to the deployment branch
-
-The workflow runs on pushes to:
-
-```text
-dev
-main
-```
-
-### 3. First apply creates ECR repositories
-
-The workflow first runs:
-
-```bash
-terraform apply -target=module.ecr -auto-approve
-```
-
-This creates the ECR repositories before Docker tries to push images.
-
-### 4. Docker images are built and pushed
-
-The workflow builds:
-
-```text
-frontend Docker image
-backend Docker image
-```
-
-Then pushes both images to ECR with `latest` and Git SHA tags.
-
-### 5. Full Terraform apply deploys the stack
-
-The workflow then runs:
-
-```bash
-terraform apply -auto-approve
-```
-
-This deploys the network, security groups, EC2 instances, and RDS database.
-
-### 6. EC2 user data starts containers
-
-Frontend EC2 pulls and runs:
-
-```text
-todo-3tier-simple/dev/todo-frontend:latest
-```
-
-Backend EC2 pulls and runs:
-
-```text
-todo-3tier-simple/dev/todo-backend:latest
-```
-
----
-
-## Test the Application
-
-After deployment, get the frontend URL:
-
-```bash
-terraform output frontend_url
-```
-
-Open it in a browser, or test the API through the frontend proxy:
-
-```bash
-curl http://<frontend-public-ip>/api/todos
-```
-
-Create another test record:
-
-```bash
-curl -X POST http://<frontend-public-ip>/api/seed
-```
-
-Expected result from `/api/todos`:
+During troubleshooting, full EC2 permission may be temporarily attached:
 
 ```json
-[
-  {
-    "id": 1,
-    "title": "Test To-Do item created during application initialization",
-    "completed": false
-  }
-]
+{
+  "Effect": "Allow",
+  "Action": "ec2:*",
+  "Resource": "*"
+}
 ```
 
----
+After deployment succeeds, replace broad permissions with scoped least-privilege permissions.
+
+## Terraform Module Structure
+
+```text
+terraform/
+  main.tf
+  variables.tf
+  outputs.tf
+  versions.tf
+  terraform.tfvars.example
+  backend-values.example.txt
+  modules/
+    network/
+    security-groups/
+    ecr/
+    compute/
+    database/
+  templates/
+    user_data_frontend.sh.tftpl
+    user_data_backend.sh.tftpl
+```
+
+### Module Responsibilities
+
+| Module | Responsibility |
+|---|---|
+| `network` | VPC, public subnet, private app subnet, private DB subnets, Internet Gateway, NAT Gateway, route tables |
+| `security-groups` | Frontend, backend, and database security groups |
+| `ecr` | Frontend and backend ECR repositories |
+| `compute` | Separate frontend EC2 and backend EC2 instances, EC2 role, instance profile, Docker runtime |
+| `database` | RDS MySQL subnet group and database instance |
+
+## Docker Image Build
+
+### Frontend Dockerfile
+
+The frontend container builds the React app and serves it through Nginx.
+
+```text
+frontend/Dockerfile
+```
+
+Nginx also proxies API traffic:
+
+```text
+/api -> backend private IP:8000
+```
+
+### Backend Dockerfile
+
+The backend container runs FastAPI with Uvicorn.
+
+```text
+backend/Dockerfile
+```
+
+FastAPI connects to RDS using environment variables passed from EC2 user data.
+
+## Database Initialization
+
+On backend startup, FastAPI automatically:
+
+```text
+Creates the todos table if it does not exist
+Inserts one test To-Do item if not already present
+Starts the API service
+```
+
+Default seed item:
+
+```text
+Test To-Do item created during application initialization
+```
+
+Useful API endpoints:
+
+```text
+GET  /health
+GET  /api/todos
+POST /api/todos
+POST /api/seed
+```
+
+## Deployment Commands
+
+The normal deployment path is GitHub Actions.
+
+Push to the dev branch:
+
+```bash
+git add .
+git commit -m "Deploy dockerized todo 3-tier app"
+git push origin dev
+```
+
+The workflow file is:
+
+```text
+.github/workflows/deploy.yml
+```
+
+Manual workflow dispatch supports:
+
+```text
+plan
+apply
+destroy
+```
 
 ## Local Terraform Commands
 
+From the `terraform` directory:
+
 ```bash
-cd terraform
 terraform fmt -recursive
 terraform init \
   -backend-config="bucket=react-js-application-terraform-state-866934333672" \
@@ -582,49 +386,111 @@ terraform init \
   -backend-config="region=us-east-1" \
   -backend-config="encrypt=true"
 terraform validate
-terraform apply -target=module.ecr -auto-approve
-terraform apply -auto-approve
+terraform plan
 ```
 
----
+## Test the Application
 
-## Local Docker Build Test
+After Terraform apply completes, get the frontend public IP from Terraform outputs or EC2 console.
 
-Frontend:
+Open in a browser:
+
+```text
+http://<frontend-public-ip>
+```
+
+Test API through the frontend proxy:
 
 ```bash
-docker build -t todo-frontend:local ./frontend
+curl http://<frontend-public-ip>/api/todos
 ```
 
-Backend:
+Create another seeded test item:
 
 ```bash
-docker build -t todo-backend:local ./backend
+curl -X POST http://<frontend-public-ip>/api/seed
 ```
 
----
+Check health:
+
+```bash
+curl http://<frontend-public-ip>/api/health
+```
+
+Depending on the Nginx proxy configuration, health may also be available as:
+
+```bash
+curl http://<frontend-public-ip>/api/health
+```
+
+## Connect to the Database
+
+RDS is private, so connect from the backend EC2 instance or through a tunnel.
+
+From backend EC2:
+
+```bash
+sudo apt update
+sudo apt install -y mysql-client
+mysql -h <rds-endpoint> -P 3306 -u todo_admin -p
+```
+
+With SSL CA bundle:
+
+```bash
+sudo mkdir -p /certs
+sudo curl -o /certs/global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+mysql -h <rds-endpoint> \
+  -P 3306 \
+  --ssl-mode=VERIFY_IDENTITY \
+  --ssl-ca=/certs/global-bundle.pem \
+  -u todo_admin \
+  -p
+```
+
+Then run:
+
+```sql
+USE todoapp;
+SHOW TABLES;
+SELECT * FROM todos;
+```
 
 ## Operational Notes
 
-- Frontend EC2 is the only public application instance.
-- Backend EC2 is private and receives traffic only from the frontend security group.
-- RDS is private and receives traffic only from the backend security group.
-- Backend EC2 requires outbound access to ECR and package repositories; this package uses a NAT Gateway.
-- S3 remote state is used without DynamoDB locking.
-- No ALB or ASG means there is no high availability or automatic scaling.
-- This is a learning/demo architecture, not a production HA design.
+- The backend EC2 is private and pulls Docker images from ECR through the NAT Gateway.
+- The frontend EC2 is public and serves traffic on port 80.
+- RDS is private and only accepts MySQL traffic from the backend security group.
+- There is no load balancer, so the application endpoint is the frontend EC2 public IP.
+- There is no autoscaling, so each layer uses one instance.
+- There is no Route 53/ACM, so the frontend uses plain HTTP for this lab version.
 
----
+## Cleanup
 
-## Final Summary
-
-This project deploys a Dockerized To-Do app using a simple 3-tier AWS design:
+Use workflow dispatch with:
 
 ```text
-React JS frontend container -> public EC2
-FastAPI backend container -> private EC2
-RDS MySQL database -> private DB subnet
-Terraform state -> existing S3 bucket
-Deployment automation -> GitHub Actions with OIDC
-Docker registry -> Amazon ECR
+destroy
+```
+
+or run locally:
+
+```bash
+terraform destroy
+```
+
+This removes the lab infrastructure created by Terraform.
+
+## Summary
+
+This project is a simple, interview-ready, hands-on 3-tier AWS deployment:
+
+```text
+React Docker container on public EC2
+FastAPI Docker container on private EC2
+RDS MySQL in private DB subnets
+ECR for container images
+Terraform reusable modules
+GitHub Actions dev build, test, and deploy pipeline
+S3-only Terraform backend
 ```

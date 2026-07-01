@@ -2,7 +2,7 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AllowTerraformStateS3Backend",
+      "Sid": "AllowS3TerraformStateAccess",
       "Effect": "Allow",
       "Action": [
         "s3:GetObject",
@@ -17,62 +17,48 @@
       ]
     },
     {
-      "Sid": "AllowECRRepositoryManagementAndImagePush",
+      "Sid": "AllowECRRepositoryManagementAndPush",
       "Effect": "Allow",
       "Action": [
         "ecr:CreateRepository",
         "ecr:DeleteRepository",
         "ecr:DescribeRepositories",
-        "ecr:ListImages",
         "ecr:DescribeImages",
+        "ecr:ListImages",
         "ecr:ListTagsForResource",
-        "ecr:PutImageScanningConfiguration",
-        "ecr:PutImageTagMutability",
         "ecr:TagResource",
         "ecr:UntagResource",
-        "ecr:GetAuthorizationToken",
+        "ecr:PutImageScanningConfiguration",
+        "ecr:PutImageTagMutability",
+        "ecr:PutLifecyclePolicy",
+        "ecr:GetLifecyclePolicy",
+        "ecr:DeleteLifecyclePolicy",
+        "ecr:SetRepositoryPolicy",
+        "ecr:GetRepositoryPolicy",
+        "ecr:DeleteRepositoryPolicy",
         "ecr:BatchCheckLayerAvailability",
         "ecr:InitiateLayerUpload",
         "ecr:UploadLayerPart",
         "ecr:CompleteLayerUpload",
         "ecr:PutImage",
-        "ecr:BatchGetImage"
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": "arn:aws:ecr:us-east-1:866934333672:repository/todo-3tier-simple/*"
+    },
+    {
+      "Sid": "AllowECRLogin",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken"
       ],
       "Resource": "*"
     },
     {
-      "Sid": "AllowNetworkComputeAndRDSForDemoStack",
+      "Sid": "AllowFullEC2ForLabDeployment",
       "Effect": "Allow",
       "Action": [
-        "ec2:*Vpc*",
-        "ec2:*Subnet*",
-        "ec2:*Route*",
-        "ec2:*InternetGateway*",
-        "ec2:*NatGateway*",
-        "ec2:*Address*",
-        "ec2:*SecurityGroup*",
-        "ec2:AuthorizeSecurityGroupIngress",
-        "ec2:AuthorizeSecurityGroupEgress",
-        "ec2:RevokeSecurityGroupIngress",
-        "ec2:RevokeSecurityGroupEgress",
-        "ec2:RunInstances",
-        "ec2:TerminateInstances",
-        "ec2:StartInstances",
-        "ec2:StopInstances",
-        "ec2:RebootInstances",
-        "ec2:Describe*",
-        "ec2:CreateTags",
-        "ec2:DeleteTags",
-        "rds:CreateDBSubnetGroup",
-        "rds:DeleteDBSubnetGroup",
-        "rds:DescribeDBSubnetGroups",
-        "rds:CreateDBInstance",
-        "rds:DeleteDBInstance",
-        "rds:ModifyDBInstance",
-        "rds:DescribeDBInstances",
-        "rds:AddTagsToResource",
-        "rds:RemoveTagsFromResource",
-        "rds:ListTagsForResource"
+        "ec2:*"
       ],
       "Resource": "*"
     },
@@ -83,25 +69,49 @@
         "iam:CreateRole",
         "iam:DeleteRole",
         "iam:GetRole",
+        "iam:UpdateRole",
         "iam:UpdateAssumeRolePolicy",
         "iam:TagRole",
         "iam:UntagRole",
-        "iam:AttachRolePolicy",
-        "iam:DetachRolePolicy",
-        "iam:ListAttachedRolePolicies",
         "iam:CreateInstanceProfile",
         "iam:DeleteInstanceProfile",
         "iam:GetInstanceProfile",
-        "iam:AddRoleToInstanceProfile",
-        "iam:RemoveRoleFromInstanceProfile",
         "iam:TagInstanceProfile",
         "iam:UntagInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile",
+        "iam:PutRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:ListAttachedRolePolicies",
         "iam:PassRole"
       ],
       "Resource": [
-        "arn:aws:iam::866934333672:role/todo-3tier-simple-*-ec2-ecr-pull-role",
-        "arn:aws:iam::866934333672:instance-profile/todo-3tier-simple-*-ec2-ecr-pull-profile"
+        "arn:aws:iam::866934333672:role/todo-3tier-simple-*",
+        "arn:aws:iam::866934333672:instance-profile/todo-3tier-simple-*"
       ]
+    },
+    {
+      "Sid": "AllowRDSForTodoApp",
+      "Effect": "Allow",
+      "Action": [
+        "rds:CreateDBSubnetGroup",
+        "rds:DeleteDBSubnetGroup",
+        "rds:DescribeDBSubnetGroups",
+        "rds:ModifyDBSubnetGroup",
+        "rds:CreateDBInstance",
+        "rds:DeleteDBInstance",
+        "rds:DescribeDBInstances",
+        "rds:ModifyDBInstance",
+        "rds:RebootDBInstance",
+        "rds:AddTagsToResource",
+        "rds:RemoveTagsFromResource",
+        "rds:ListTagsForResource"
+      ],
+      "Resource": "*"
     }
   ]
 }
