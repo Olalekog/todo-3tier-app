@@ -15,7 +15,7 @@ on:
       terraform_action:
         description: "Terraform action to run"
         required: true
-        default: "plan"
+        default: "apply"
         type: choice
         options:
           - plan
