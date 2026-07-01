@@ -1,0 +1,172 @@
+name: Deploy Dockerized 3-Tier Todo App
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - "terraform/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      terraform_action:
+        description: "Terraform action to run"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+  ENVIRONMENT: ${{ vars.ENVIRONMENT }}
+  BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
+  TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION }}
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  IMAGE_TAG: latest
+  TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+  TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
+  TF_VAR_environment: ${{ vars.ENVIRONMENT }}
+  TF_VAR_image_tag: latest
+  TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+  TF_VAR_allowed_ssh_cidr: ${{ vars.ALLOWED_SSH_CIDR }}
+
+jobs:
+  terraform:
+    name: Build Images and Deploy Infrastructure
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required variables
+        shell: bash
+        run: |
+          REQUIRED_VARS=(
+            "AWS_REGION"
+            "PROJECT_NAME"
+            "ENVIRONMENT"
+            "BOOTSTRAP_ROLE_ARN"
+            "TERRAFORM_VERSION"
+            "TF_STATE_BUCKET"
+            "TF_VAR_db_password"
+          )
+
+          for VAR_NAME in "${REQUIRED_VARS[@]}"; do
+            if [[ -z "${!VAR_NAME}" ]]; then
+              echo "Missing required GitHub variable or secret: ${VAR_NAME}"
+              exit 1
+            fi
+          done
+
+          echo "Required variables are present."
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Confirm AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Format Check
+        working-directory: terraform
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${PROJECT_NAME}/${ENVIRONMENT}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Resolve Terraform Action
+        id: resolve
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ACTION="${{ github.event.inputs.terraform_action }}"
+          elif [[ "${{ github.ref_name }}" == "dev" || "${{ github.ref_name }}" == "main" ]]; then
+            ACTION="apply"
+          else
+            ACTION="plan"
+          fi
+          echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
+          echo "Terraform action: ${ACTION}"
+
+      - name: Terraform Plan
+        if: steps.resolve.outputs.action == 'plan'
+        working-directory: terraform
+        run: terraform plan -out=tfplan
+
+      - name: Create or Update ECR Repositories First
+        if: steps.resolve.outputs.action == 'apply'
+        working-directory: terraform
+        run: terraform apply -target=module.ecr -auto-approve
+
+      - name: Login to Amazon ECR
+        if: steps.resolve.outputs.action == 'apply'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Docker Images
+        if: steps.resolve.outputs.action == 'apply'
+        shell: bash
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          FRONTEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
+          BACKEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
+
+          FRONTEND_IMAGE_LATEST="${REGISTRY}/${FRONTEND_REPO}:latest"
+          BACKEND_IMAGE_LATEST="${REGISTRY}/${BACKEND_REPO}:latest"
+          FRONTEND_IMAGE_SHA="${REGISTRY}/${FRONTEND_REPO}:${GITHUB_SHA}"
+          BACKEND_IMAGE_SHA="${REGISTRY}/${BACKEND_REPO}:${GITHUB_SHA}"
+
+          docker build -t "${FRONTEND_IMAGE_LATEST}" -t "${FRONTEND_IMAGE_SHA}" ./frontend
+          docker build -t "${BACKEND_IMAGE_LATEST}" -t "${BACKEND_IMAGE_SHA}" ./backend
+
+          docker push "${FRONTEND_IMAGE_LATEST}"
+          docker push "${FRONTEND_IMAGE_SHA}"
+          docker push "${BACKEND_IMAGE_LATEST}"
+          docker push "${BACKEND_IMAGE_SHA}"
+
+      - name: Terraform Apply Full Stack
+        if: steps.resolve.outputs.action == 'apply'
+        working-directory: terraform
+        run: terraform apply -auto-approve
+
+      - name: Terraform Destroy
+        if: steps.resolve.outputs.action == 'destroy'
+        working-directory: terraform
+        run: terraform destroy -auto-approve
+
+      - name: Terraform Outputs
+        if: steps.resolve.outputs.action == 'apply'
+        working-directory: terraform
+        run: terraform output
