@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760">
+  <defs>
+    <style>
+      .title{font:700 28px Arial;fill:#172033}.sub{font:400 15px Arial;fill:#344054}.h{font:700 17px Arial;fill:#111827}.t{font:400 14px Arial;fill:#1f2937}.small{font:400 12px Arial;fill:#475467}.box{fill:#fff;stroke:#98a2b3;stroke-width:2;rx:14}.vpc{fill:#f8fafc;stroke:#475467;stroke-width:2;rx:20}.pub{fill:#ecfdf3;stroke:#12b76a;stroke-width:2;rx:14}.priv{fill:#eff8ff;stroke:#2e90fa;stroke-width:2;rx:14}.db{fill:#fff7ed;stroke:#f79009;stroke-width:2;rx:14}.svc{fill:#f4f3ff;stroke:#7a5af8;stroke-width:2;rx:14}.arrow{stroke:#344054;stroke-width:3;fill:none;marker-end:url(#arrow)}.dash{stroke:#667085;stroke-width:2;fill:none;stroke-dasharray:8 6;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#344054"/></marker>
+  </defs>
+  <text x="40" y="50" class="title">Dockerized To-Do 3-Tier Application on AWS</text>
+  <text x="40" y="78" class="sub">Single frontend EC2, single private backend EC2, RDS MySQL, ECR images, GitHub Actions deployment</text>
+
+  <rect x="40" y="115" width="1120" height="565" class="vpc"/>
+  <text x="62" y="148" class="h">VPC: todo-3tier-simple-dev-vpc</text>
+  <text x="62" y="172" class="small">Example CIDR: 10.20.0.0/16</text>
+
+  <rect x="80" y="210" width="295" height="310" class="pub"/>
+  <text x="105" y="242" class="h">Public subnet</text>
+  <text x="105" y="265" class="small">Internet-facing frontend tier</text>
+  <rect x="115" y="305" width="225" height="130" class="box"/>
+  <text x="140" y="340" class="h">Frontend EC2</text>
+  <text x="140" y="365" class="t">Docker: React + Nginx</text>
+  <text x="140" y="388" class="t">Public IP, port 80</text>
+  <text x="140" y="411" class="t">Proxies /api to backend</text>
+
+  <rect x="455" y="210" width="295" height="310" class="priv"/>
+  <text x="480" y="242" class="h">Private app subnet</text>
+  <text x="480" y="265" class="small">No public IP on backend</text>
+  <rect x="490" y="305" width="225" height="130" class="box"/>
+  <text x="515" y="340" class="h">Backend EC2</text>
+  <text x="515" y="365" class="t">Docker: FastAPI</text>
+  <text x="515" y="388" class="t">Private IP, port 8000</text>
+  <text x="515" y="411" class="t">Initializes todos table</text>
+
+  <rect x="830" y="210" width="295" height="310" class="db"/>
+  <text x="855" y="242" class="h">Private DB subnets</text>
+  <text x="855" y="265" class="small">Database is not public</text>
+  <rect x="865" y="305" width="225" height="130" class="box"/>
+  <text x="890" y="340" class="h">RDS MySQL</text>
+  <text x="890" y="365" class="t">Private endpoint</text>
+  <text x="890" y="388" class="t">Port 3306</text>
+  <text x="890" y="411" class="t">Stores To-Do records</text>
+
+  <rect x="80" y="565" width="295" height="70" class="svc"/>
+  <text x="105" y="597" class="h">Internet Gateway</text>
+  <text x="105" y="620" class="small">Public inbound HTTP to frontend</text>
+
+  <rect x="455" y="565" width="295" height="70" class="svc"/>
+  <text x="480" y="597" class="h">NAT Gateway</text>
+  <text x="480" y="620" class="small">Private EC2 pulls packages/images</text>
+
+  <rect x="830" y="565" width="295" height="70" class="svc"/>
+  <text x="855" y="597" class="h">Amazon ECR</text>
+  <text x="855" y="620" class="small">Stores frontend/backend Docker images</text>
+
+  <rect x="80" y="105" width="215" height="65" class="box"/>
+  <text x="105" y="135" class="h">User Browser</text>
+  <text x="105" y="158" class="small">http://frontend-public-ip</text>
+
+  <path class="arrow" d="M188 170 L188 305"/>
+  <path class="arrow" d="M340 370 L490 370"/>
+  <path class="arrow" d="M715 370 L865 370"/>
+  <path class="dash" d="M602 565 L602 435"/>
+  <path class="dash" d="M830 600 L750 600"/>
+  <path class="dash" d="M228 565 L228 435"/>
+
+  <text x="372" y="356" class="small">/api over private traffic :8000</text>
+  <text x="752" y="356" class="small">MySQL :3306</text>
+  <text x="62" y="720" class="small">Excluded by design: ALB, ASG, Route 53, ACM, Cognito, app-created KMS. Terraform backend uses S3 only.</text>
+</svg>
