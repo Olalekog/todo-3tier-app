@@ -199,6 +199,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Pull Docker Images From ECR
+        shell: bash
+        run: |
+          docker pull "${{ needs.dev-build.outputs.frontend_image }}"
+          docker pull "${{ needs.dev-build.outputs.backend_image }}"
+
       - name: Test Frontend Docker Image
         shell: bash
         run: |
@@ -207,20 +223,54 @@ jobs:
           curl -f http://localhost:8080 || (docker logs todo-frontend-test && exit 1)
           docker rm -f todo-frontend-test
 
+      - name: Start MySQL Test Database
+        shell: bash
+        run: |
+          docker network create todo-test-network
+
+          docker run -d --name todo-mysql-test \
+            --network todo-test-network \
+            -e MYSQL_DATABASE=todoapp \
+            -e MYSQL_USER=todo_admin \
+            -e MYSQL_PASSWORD=test-password \
+            -e MYSQL_ROOT_PASSWORD=root-password \
+            mysql:8.0
+
+          for i in {1..30}; do
+            if docker exec todo-mysql-test mysqladmin ping -h 127.0.0.1 -uroot -proot-password --silent; then
+              echo "MySQL test database is ready."
+              exit 0
+            fi
+            echo "Waiting for MySQL test database..."
+            sleep 5
+          done
+
+          docker logs todo-mysql-test
+          exit 1
+
       - name: Test Backend Docker Image
         shell: bash
         run: |
-          docker run -d --name todo-backend-test -p 8000:8000 \
-            -e DB_HOST="localhost" \
+          docker run -d --name todo-backend-test \
+            --network todo-test-network \
+            -p 8000:8000 \
+            -e DB_HOST="todo-mysql-test" \
             -e DB_PORT="3306" \
             -e DB_NAME="todoapp" \
             -e DB_USER="todo_admin" \
             -e DB_PASSWORD="test-password" \
             "${{ needs.dev-build.outputs.backend_image }}"
 
-          sleep 10
+          sleep 15
           curl -f http://localhost:8000/health || (docker logs todo-backend-test && exit 1)
-          docker rm -f todo-backend-test
+          curl -f http://localhost:8000/todos || true
+
+      - name: Cleanup Test Containers
+        if: always()
+        shell: bash
+        run: |
+          docker rm -f todo-frontend-test todo-backend-test todo-mysql-test || true
+          docker network rm todo-test-network || true
 
   dev-deploy:
     name: Dev Deploy Infrastructure
