@@ -22,7 +22,7 @@ on:
       terraform_action:
         description: "Terraform action to run"
         required: true
-        default: "apply"
+        default: "destroy"
         type: choice
         options:
           - plan
