@@ -52,18 +52,18 @@ resource "aws_instance" "this" {
   user_data_replace_on_change = false
 
   user_data = templatefile(var.user_data_template_path, {
-    project_name        = var.project_name
-    environment         = var.environment
-    workload            = var.workload_name
-    aws_region          = var.aws_region
-    image_uri           = var.image_uri
-    frontend_image_uri  = var.image_uri
-    backend_image_uri   = var.image_uri
-    backend_private_ip  = var.backend_private_ip
-    db_host             = var.db_host
-    db_name             = var.db_name
-    db_username         = var.db_username
-    db_password         = var.db_password
+    project_name       = var.project_name
+    environment        = var.environment
+    workload           = var.workload_name
+    aws_region         = var.aws_region
+    image_uri          = var.image_uri
+    frontend_image_uri = var.image_uri
+    backend_image_uri  = var.image_uri
+    backend_private_ip = var.backend_private_ip
+    db_host            = var.db_host
+    db_name            = var.db_name
+    db_username        = var.db_username
+    db_password        = var.db_password
   })
 
   root_block_device {
