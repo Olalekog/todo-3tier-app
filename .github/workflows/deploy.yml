@@ -269,6 +269,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
 
       - name: Terraform fmt
         working-directory: terraform
@@ -348,37 +349,44 @@ jobs:
               -var="db_password=${DB_PASSWORD}" \
               -var="image_tag=${IMAGE_TAG}" \
               -out=tfplan
+
+            terraform show -json tfplan > tfplan.json
             echo "plan_has_changes=true" >> "${GITHUB_OUTPUT}"
             echo "plan_has_destructive_changes=true" >> "${GITHUB_OUTPUT}"
+
+            if [[ "${ALLOW_REPLACEMENT}" != "true" ]]; then
+              echo "Destroy was requested, but allow_replacement is false."
+              echo "Blocking destroy to protect application infrastructure."
+              exit 1
+            fi
+
             exit 0
           fi
 
-          set +e
-          terraform plan -detailed-exitcode \
+          terraform plan \
             -var-file="${TFVARS_FILE}" \
             -var="aws_region=${AWS_REGION}" \
             -var="project_name=${PROJECT_NAME}" \
             -var="db_password=${DB_PASSWORD}" \
             -var="image_tag=${IMAGE_TAG}" \
             -out=tfplan
-          PLAN_EXIT_CODE=$?
-          set -e
-
-          if [[ "${PLAN_EXIT_CODE}" -eq 0 ]]; then
-            echo "Terraform detected no infrastructure changes. Apply will be skipped."
-            echo "plan_has_changes=false" >> "${GITHUB_OUTPUT}"
-            exit 0
-          elif [[ "${PLAN_EXIT_CODE}" -eq 2 ]]; then
-            echo "Terraform detected infrastructure changes."
-            echo "plan_has_changes=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "Terraform plan failed with exit code ${PLAN_EXIT_CODE}."
-            exit "${PLAN_EXIT_CODE}"
-          fi
 
           terraform show -json tfplan > tfplan.json
 
+          CHANGE_COUNT="$(jq '[.resource_changes[]? | select(.change.actions != ["no-op"])] | length' tfplan.json)"
           DESTRUCTIVE_COUNT="$(jq '[.resource_changes[]? | select(.change.actions | index("delete"))] | length' tfplan.json)"
+
+          echo "Terraform change count: ${CHANGE_COUNT}"
+          echo "Terraform destructive/replacement count: ${DESTRUCTIVE_COUNT}"
+
+          if [[ "${CHANGE_COUNT}" -eq 0 ]]; then
+            echo "Terraform detected no infrastructure changes. Apply will be skipped."
+            echo "plan_has_changes=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "Terraform detected infrastructure changes. Apply is allowed if no destructive actions are present."
+          echo "plan_has_changes=true" >> "${GITHUB_OUTPUT}"
 
           if [[ "${DESTRUCTIVE_COUNT}" -gt 0 ]]; then
             echo "plan_has_destructive_changes=true" >> "${GITHUB_OUTPUT}"
@@ -392,7 +400,7 @@ jobs:
               exit 1
             fi
           else
-            echo "No delete or replacement actions detected."
+            echo "No delete or replacement actions detected. In-place updates are allowed."
           fi
 
       - name: Upload Terraform plan
@@ -433,6 +441,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
 
       - name: Terraform Init
         working-directory: terraform
@@ -486,6 +495,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
 
       - name: Terraform Init
         working-directory: terraform
