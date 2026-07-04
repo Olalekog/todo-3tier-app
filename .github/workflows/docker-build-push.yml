@@ -10,11 +10,11 @@ on:
       - "frontend/**"
       - "backend/**"
       - ".github/workflows/docker-build-push.yml"
-
+      - ".github/workflows/deploy.yml"
   workflow_dispatch:
     inputs:
       environment:
-        description: "Target environment"
+        description: Environment to build for
         required: true
         type: choice
         options:
@@ -26,7 +26,11 @@ on:
 permissions:
   id-token: write
   contents: read
-  actions: write
+  actions: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
@@ -37,14 +41,14 @@ env:
 
 jobs:
   resolve:
-    name: Resolve Build Environment
+    name: Resolve Build Inputs
     runs-on: ubuntu-latest
     outputs:
       environment: ${{ steps.resolve.outputs.environment }}
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
       aws_account_id: ${{ steps.resolve.outputs.aws_account_id }}
-      ecr_registry: ${{ steps.resolve.outputs.ecr_registry }}
-      frontend_repository: ${{ steps.resolve.outputs.frontend_repository }}
-      backend_repository: ${{ steps.resolve.outputs.backend_repository }}
+      frontend_repo: ${{ steps.resolve.outputs.frontend_repo }}
+      backend_repo: ${{ steps.resolve.outputs.backend_repo }}
       frontend_image: ${{ steps.resolve.outputs.frontend_image }}
       backend_image: ${{ steps.resolve.outputs.backend_image }}
       frontend_image_latest: ${{ steps.resolve.outputs.frontend_image_latest }}
@@ -54,86 +58,74 @@ jobs:
         id: resolve
         shell: bash
         run: |
+          set -euo pipefail
+
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            ENVIRONMENT="${{ github.event.inputs.environment }}"
+            ENVIRONMENT="${{ inputs.environment }}"
           else
-            ENVIRONMENT="${GITHUB_REF_NAME}"
+            case "${GITHUB_REF_NAME}" in
+              dev) ENVIRONMENT="dev" ;;
+              uat) ENVIRONMENT="uat" ;;
+              prod) ENVIRONMENT="prod" ;;
+              *) echo "Unsupported branch: ${GITHUB_REF_NAME}"; exit 1 ;;
+            esac
           fi
 
-          case "${ENVIRONMENT}" in
-            dev|uat|prod)
-              ;;
-            *)
-              echo "Unsupported environment: ${ENVIRONMENT}"
-              exit 1
-              ;;
-          esac
+          if [[ -z "${PROJECT_NAME}" ]]; then
+            echo "Missing required GitHub variable: PROJECT_NAME"
+            exit 1
+          fi
+
+          if [[ -z "${AWS_REGION}" ]]; then
+            echo "Missing required GitHub variable: AWS_REGION"
+            exit 1
+          fi
+
+          if [[ -z "${BOOTSTRAP_ROLE_ARN}" ]]; then
+            echo "Missing required GitHub variable: BOOTSTRAP_ROLE_ARN"
+            exit 1
+          fi
 
           RESOLVED_AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
-          if [[ -z "${RESOLVED_AWS_ACCOUNT_ID}" && -n "${BOOTSTRAP_ROLE_ARN}" ]]; then
+          if [[ -z "${RESOLVED_AWS_ACCOUNT_ID}" ]]; then
             RESOLVED_AWS_ACCOUNT_ID="$(echo "${BOOTSTRAP_ROLE_ARN}" | awk -F: '{print $5}')"
           fi
 
-          REQUIRED_VARS=(
-            "AWS_REGION"
-            "RESOLVED_AWS_ACCOUNT_ID"
-            "PROJECT_NAME"
-            "BOOTSTRAP_ROLE_ARN"
-          )
+          if [[ -z "${RESOLVED_AWS_ACCOUNT_ID}" ]]; then
+            echo "Could not resolve AWS account ID. Set AWS_ACCOUNT_ID or use a valid BOOTSTRAP_ROLE_ARN."
+            exit 1
+          fi
 
-          for VAR_NAME in "${REQUIRED_VARS[@]}"; do
-            if [[ -z "${!VAR_NAME}" ]]; then
-              echo "Missing required GitHub variable: ${VAR_NAME}"
-              exit 1
-            fi
-          done
-
-          ECR_REGISTRY="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          FRONTEND_REPOSITORY="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
-          BACKEND_REPOSITORY="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
           IMAGE_TAG="${GITHUB_SHA}"
+          FRONTEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
+          BACKEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
+          ECR_REGISTRY="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
-          echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
-          echo "aws_account_id=${RESOLVED_AWS_ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
-          echo "ecr_registry=${ECR_REGISTRY}" >> "$GITHUB_OUTPUT"
-          echo "frontend_repository=${FRONTEND_REPOSITORY}" >> "$GITHUB_OUTPUT"
-          echo "backend_repository=${BACKEND_REPOSITORY}" >> "$GITHUB_OUTPUT"
-          echo "frontend_image=${ECR_REGISTRY}/${FRONTEND_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
-          echo "backend_image=${ECR_REGISTRY}/${BACKEND_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
-          echo "frontend_image_latest=${ECR_REGISTRY}/${FRONTEND_REPOSITORY}:latest" >> "$GITHUB_OUTPUT"
-          echo "backend_image_latest=${ECR_REGISTRY}/${BACKEND_REPOSITORY}:latest" >> "$GITHUB_OUTPUT"
+          echo "environment=${ENVIRONMENT}" >> "${GITHUB_OUTPUT}"
+          echo "image_tag=${IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "aws_account_id=${RESOLVED_AWS_ACCOUNT_ID}" >> "${GITHUB_OUTPUT}"
+          echo "frontend_repo=${FRONTEND_REPO}" >> "${GITHUB_OUTPUT}"
+          echo "backend_repo=${BACKEND_REPO}" >> "${GITHUB_OUTPUT}"
+          echo "frontend_image=${ECR_REGISTRY}/${FRONTEND_REPO}:${IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "backend_image=${ECR_REGISTRY}/${BACKEND_REPO}:${IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "frontend_image_latest=${ECR_REGISTRY}/${FRONTEND_REPO}:latest" >> "${GITHUB_OUTPUT}"
+          echo "backend_image_latest=${ECR_REGISTRY}/${BACKEND_REPO}:latest" >> "${GITHUB_OUTPUT}"
 
   build:
     name: Build Docker Images
+    needs: resolve
     runs-on: ubuntu-latest
-    needs:
-      - resolve
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate Docker build paths
+      - name: Validate Docker directories
         shell: bash
         run: |
-          if [[ ! -d "frontend" ]]; then
-            echo "Missing frontend directory at repo root."
-            exit 1
-          fi
-
-          if [[ ! -d "backend" ]]; then
-            echo "Missing backend directory at repo root."
-            exit 1
-          fi
-
-          if [[ ! -f "frontend/Dockerfile" ]]; then
-            echo "Missing frontend/Dockerfile."
-            exit 1
-          fi
-
-          if [[ ! -f "backend/Dockerfile" ]]; then
-            echo "Missing backend/Dockerfile."
-            exit 1
-          fi
+          test -d frontend || (echo "Missing frontend directory" && exit 1)
+          test -d backend || (echo "Missing backend directory" && exit 1)
+          test -f frontend/Dockerfile || (echo "Missing frontend/Dockerfile" && exit 1)
+          test -f backend/Dockerfile || (echo "Missing backend/Dockerfile" && exit 1)
 
       - name: Build frontend image
         shell: bash
@@ -154,51 +146,35 @@ jobs:
       - name: Save Docker images as artifacts
         shell: bash
         run: |
-          mkdir -p docker-artifacts
-          docker save "${{ needs.resolve.outputs.frontend_image }}" "${{ needs.resolve.outputs.frontend_image_latest }}" \
-            -o docker-artifacts/frontend-image.tar
-          docker save "${{ needs.resolve.outputs.backend_image }}" "${{ needs.resolve.outputs.backend_image_latest }}" \
-            -o docker-artifacts/backend-image.tar
+          mkdir -p docker-images
+          docker save "${{ needs.resolve.outputs.frontend_image }}" "${{ needs.resolve.outputs.frontend_image_latest }}" -o docker-images/frontend-image.tar
+          docker save "${{ needs.resolve.outputs.backend_image }}" "${{ needs.resolve.outputs.backend_image_latest }}" -o docker-images/backend-image.tar
 
-      - name: Upload frontend image artifact
+      - name: Upload Docker image artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-image
-          path: docker-artifacts/frontend-image.tar
-          retention-days: 1
-
-      - name: Upload backend image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-image
-          path: docker-artifacts/backend-image.tar
+          name: docker-images-${{ needs.resolve.outputs.environment }}-${{ needs.resolve.outputs.image_tag }}
+          path: docker-images/*.tar
           retention-days: 1
 
   test:
     name: Test Docker Images
-    runs-on: ubuntu-latest
     needs:
       - resolve
       - build
+    runs-on: ubuntu-latest
     steps:
-      - name: Download frontend image artifact
+      - name: Download Docker image artifacts
         uses: actions/download-artifact@v4
         with:
-          name: frontend-image
-          path: docker-artifacts
-
-      - name: Download backend image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: backend-image
-          path: docker-artifacts
+          name: docker-images-${{ needs.resolve.outputs.environment }}-${{ needs.resolve.outputs.image_tag }}
+          path: docker-images
 
       - name: Load Docker images
         shell: bash
         run: |
-          docker load -i docker-artifacts/frontend-image.tar
-          docker load -i docker-artifacts/backend-image.tar
-          docker images
+          docker load -i docker-images/frontend-image.tar
+          docker load -i docker-images/backend-image.tar
 
       - name: Test frontend container
         shell: bash
@@ -211,37 +187,57 @@ jobs:
       - name: Test backend container
         shell: bash
         run: |
-          docker network create todo-test-network
-
-          docker run -d --name todo-mysql-test --network todo-test-network \
-            -e MYSQL_ROOT_PASSWORD=rootpassword \
+          docker network create todo-test
+          docker run -d --name todo-mysql-test --network todo-test \
+            -e MYSQL_ROOT_PASSWORD=testpass \
             -e MYSQL_DATABASE=todoapp \
             -e MYSQL_USER=todo_admin \
-            -e MYSQL_PASSWORD=todo_password \
+            -e MYSQL_PASSWORD=testpass \
             mysql:8
 
-          sleep 35
+          echo "Waiting for MySQL..."
+          for i in {1..30}; do
+            if docker exec todo-mysql-test mysqladmin ping -h localhost -uroot -ptestpass --silent; then
+              break
+            fi
+            sleep 3
+          done
 
-          docker run -d --name todo-backend-test --network todo-test-network -p 8000:8000 \
+          docker run -d --name todo-backend-test --network todo-test -p 8000:8000 \
             -e DB_HOST=todo-mysql-test \
             -e DB_PORT=3306 \
             -e DB_NAME=todoapp \
             -e DB_USER=todo_admin \
-            -e DB_PASSWORD=todo_password \
+            -e DB_PASSWORD=testpass \
             "${{ needs.resolve.outputs.backend_image }}"
 
           sleep 15
           curl -f http://localhost:8000/health || (docker logs todo-backend-test && exit 1)
           docker rm -f todo-backend-test todo-mysql-test
-          docker network rm todo-test-network
+          docker network rm todo-test
 
   push:
     name: Push Docker Images to ECR
-    runs-on: ubuntu-latest
     needs:
       - resolve
       - test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
+      - name: Download Docker image artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-images-${{ needs.resolve.outputs.environment }}-${{ needs.resolve.outputs.image_tag }}
+          path: docker-images
+
+      - name: Load Docker images
+        shell: bash
+        run: |
+          docker load -i docker-images/frontend-image.tar
+          docker load -i docker-images/backend-image.tar
+
       - name: Configure AWS credentials using GitHub OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -250,6 +246,7 @@ jobs:
           role-session-name: GitHubActionsDockerPush
 
       - name: Confirm AWS identity
+        shell: bash
         run: aws sts get-caller-identity
 
       - name: Login to Amazon ECR
@@ -258,74 +255,28 @@ jobs:
       - name: Ensure ECR repositories exist
         shell: bash
         run: |
-          aws ecr describe-repositories --repository-names "${{ needs.resolve.outputs.frontend_repository }}" >/dev/null 2>&1 || \
-            aws ecr create-repository --repository-name "${{ needs.resolve.outputs.frontend_repository }}" \
-              --image-scanning-configuration scanOnPush=true
+          for REPO in "${{ needs.resolve.outputs.frontend_repo }}" "${{ needs.resolve.outputs.backend_repo }}"; do
+            aws ecr describe-repositories --repository-names "${REPO}" >/dev/null 2>&1 || \
+            aws ecr create-repository --repository-name "${REPO}" --image-scanning-configuration scanOnPush=true
+          done
 
-          aws ecr describe-repositories --repository-names "${{ needs.resolve.outputs.backend_repository }}" >/dev/null 2>&1 || \
-            aws ecr create-repository --repository-name "${{ needs.resolve.outputs.backend_repository }}" \
-              --image-scanning-configuration scanOnPush=true
-
-      - name: Download frontend image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: frontend-image
-          path: docker-artifacts
-
-      - name: Download backend image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: backend-image
-          path: docker-artifacts
-
-      - name: Load Docker images
-        shell: bash
-        run: |
-          docker load -i docker-artifacts/frontend-image.tar
-          docker load -i docker-artifacts/backend-image.tar
-          docker images
-
-      - name: Push frontend images
+      - name: Push images
         shell: bash
         run: |
           docker push "${{ needs.resolve.outputs.frontend_image }}"
           docker push "${{ needs.resolve.outputs.frontend_image_latest }}"
-
-      - name: Push backend images
-        shell: bash
-        run: |
           docker push "${{ needs.resolve.outputs.backend_image }}"
           docker push "${{ needs.resolve.outputs.backend_image_latest }}"
 
-      - name: Print pushed image URIs
-        shell: bash
-        run: |
-          echo "Frontend SHA image: ${{ needs.resolve.outputs.frontend_image }}"
-          echo "Frontend latest image: ${{ needs.resolve.outputs.frontend_image_latest }}"
-          echo "Backend SHA image: ${{ needs.resolve.outputs.backend_image }}"
-          echo "Backend latest image: ${{ needs.resolve.outputs.backend_image_latest }}"
-
-  trigger-dev-deploy:
-    name: Trigger Dev Deploy Workflow
-    runs-on: ubuntu-latest
+  deploy-dev:
+    name: Deploy Dev With New Image
     needs:
       - resolve
       - push
-    if: github.event_name == 'push' && needs.resolve.outputs.environment == 'dev'
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: Trigger deploy.yml for dev with new image tag
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          echo "Triggering deploy.yml for dev with image tag: ${IMAGE_TAG}"
-          gh workflow run deploy.yml \
-            --repo "${GITHUB_REPOSITORY}" \
-            --ref dev \
-            -f environment=dev \
-            -f action=apply \
-            -f image_tag="${IMAGE_TAG}"
+    if: needs.resolve.outputs.environment == 'dev'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: dev
+      action: apply
+      image_tag: ${{ needs.resolve.outputs.image_tag }}
+    secrets: inherit
