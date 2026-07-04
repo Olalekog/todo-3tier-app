@@ -1,7 +1,10 @@
+# Local example only. Prefer terraform/environments/<env>.tfvars for real deployments.
 aws_region       = "us-east-1"
 project_name     = "todo-3tier-simple"
 environment      = "dev"
 image_tag        = "latest"
 allowed_ssh_cidr = "YOUR_PUBLIC_IP/32"
-key_name         = ""
-db_password      = "REPLACE_WITH_STRONG_PASSWORD"
+key_name         = null
+
+# Do not commit real DB passwords.
+db_password = "REPLACE_WITH_STRONG_PASSWORD"

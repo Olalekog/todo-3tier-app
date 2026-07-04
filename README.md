@@ -39,6 +39,7 @@ This repository includes three diagram assets in the `assets/` folder. These dia
 | Architecture diagram | `assets/architecture-diagram.svg` | AWS 3-tier layout with public frontend EC2, private backend EC2, private RDS, ECR, S3 state, and GitHub Actions |
 | Deployment flow | `assets/deployment-flow.svg` | CI/CD path from GitHub push through dev validate, build, test, and deploy |
 | Request flow | `assets/request-flow.svg` | Browser request path through frontend Nginx proxy, FastAPI backend, and RDS MySQL |
+| Promotion flow | `assets/promotion-flow.svg` | Branch promotion guard: only `dev → uat`, then `uat → prod` with production approval gate |
 
 ### Architecture Diagram Flow
 
@@ -107,6 +108,31 @@ Developer pushes to dev branch
 
 ![Request Flow](assets/request-flow.svg)
 
+
+### Environment Promotion Flow
+
+The workflow enforces controlled promotion between environments. Pull requests are allowed only in this order:
+
+```text
+dev branch
+  -> Pull request into uat
+  -> Merge to uat deploys the UAT environment
+  -> Pull request from uat into prod
+  -> Merge to prod waits for GitHub Environment approval
+  -> Approved prod deployment runs Terraform with prod.tfvars
+```
+
+Invalid promotion paths are blocked by the `validate-promotion-path` job. Examples of blocked paths:
+
+```text
+feature -> uat
+feature -> prod
+dev -> prod
+prod -> uat
+```
+
+![Promotion Flow](assets/promotion-flow.svg)
+
 ## Complete Repository and Terraform Structure
 
 ```text
@@ -117,7 +143,8 @@ todo-3tier-reusable-github-actions/
 ├── assets/
 │   ├── architecture-diagram.svg
 │   ├── deployment-flow.svg
-│   └── request-flow.svg
+│   ├── request-flow.svg
+│   └── promotion-flow.svg
 ├── backend/
 │   ├── Dockerfile
 │   ├── .dockerignore
@@ -262,6 +289,53 @@ Internet -> Frontend EC2 SG :80
 Frontend EC2 SG -> Backend EC2 SG :8000
 Backend EC2 SG -> RDS SG :3306
 ```
+
+
+## Environment Promotion Rules
+
+The pipeline supports three environments with separate tfvars files:
+
+| Branch | Terraform tfvars file | Deployment behavior | Approval requirement |
+|---|---|---|---|
+| `dev` | `terraform/environments/dev.tfvars` | Push to `dev` builds, tests, and deploys dev | No approval by default |
+| `uat` | `terraform/environments/uat.tfvars` | Only PRs from `dev` are allowed; merge deploys UAT | Optional GitHub Environment approval |
+| `prod` | `terraform/environments/prod.tfvars` | Only PRs from `uat` are allowed; merge waits for production approval | Required GitHub Environment approval |
+
+### Pull request promotion guard
+
+The workflow has a `validate-promotion-path` job that runs on pull requests into `uat` and `prod`. It allows only:
+
+```text
+dev -> uat
+uat -> prod
+```
+
+Any other pull request path fails immediately before Terraform validation or deployment.
+
+### Production approval gate
+
+The deploy job uses:
+
+```yaml
+environment: ${{ needs.set-environment.outputs.environment }}
+```
+
+To enforce approval for production, create a GitHub Environment named exactly:
+
+```text
+prod
+```
+
+Then configure:
+
+```text
+Repository Settings
+  -> Environments
+  -> prod
+  -> Required reviewers
+```
+
+When code is merged from `uat` into `prod`, GitHub Actions pauses the `Deploy Infrastructure` job until an approved reviewer approves the `prod` environment deployment.
 
 ## GitHub Actions Deployment Flow
 
@@ -688,4 +762,117 @@ ECR for container images
 Terraform reusable modules
 GitHub Actions dev build, test, and deploy pipeline
 S3-only Terraform backend
+```
+
+
+## Environment-specific Terraform tfvars files
+
+### Environment tfvars flow diagram
+
+![Environment tfvars flow](assets/environment-tfvars-flow.svg)
+
+
+This project now supports separate Terraform variable files per environment. Each environment has its own VPC CIDR, subnet CIDRs, instance sizing, database sizing, and tags. The deployment workflow automatically selects the correct file based on the branch or manual workflow input.
+
+```text
+terraform/
+├── environments/
+│   ├── dev.tfvars
+│   ├── uat.tfvars
+│   └── prod.tfvars
+├── main.tf
+├── variables.tf
+├── outputs.tf
+├── versions.tf
+├── modules/
+│   ├── network/
+│   ├── security-groups/
+│   ├── ecr/
+│   ├── compute/
+│   └── database/
+└── templates/
+    ├── user_data_frontend.sh.tftpl
+    └── user_data_backend.sh.tftpl
+```
+
+### Environment branch mapping
+
+```text
+dev branch  -> terraform/environments/dev.tfvars  -> dev environment
+uat branch  -> terraform/environments/uat.tfvars  -> uat environment
+prod branch -> terraform/environments/prod.tfvars -> prod environment
+```
+
+### Remote state path per environment
+
+The GitHub Actions workflow uses one S3 bucket, but stores each environment in a separate state key:
+
+```text
+s3://react-js-application-terraform-state-866934333672/todo-3tier-simple/dev/terraform.tfstate
+s3://react-js-application-terraform-state-866934333672/todo-3tier-simple/uat/terraform.tfstate
+s3://react-js-application-terraform-state-866934333672/todo-3tier-simple/prod/terraform.tfstate
+```
+
+### What belongs in each tfvars file
+
+Each `.tfvars` file contains non-sensitive environment configuration:
+
+```hcl
+aws_region   = "us-east-1"
+project_name = "todo-3tier-simple"
+environment  = "dev"
+
+vpc_cidr                 = "10.40.0.0/16"
+public_subnet_cidrs      = ["10.40.1.0/24", "10.40.2.0/24"]
+private_app_subnet_cidrs = ["10.40.11.0/24", "10.40.12.0/24"]
+private_db_subnet_cidrs  = ["10.40.21.0/24", "10.40.22.0/24"]
+
+instance_type        = "t3.micro"
+db_instance_class    = "db.t3.micro"
+db_allocated_storage = 20
+```
+
+Do not store database passwords in `.tfvars`. The workflow passes the database password securely from the GitHub secret:
+
+```text
+DB_PASSWORD
+```
+
+### Manual deployment by environment
+
+Use **Actions → Build, Test, and Deploy Todo App → Run workflow**, then choose:
+
+```text
+environment: dev | uat | prod
+terraform_action: plan | apply | destroy
+```
+
+### CI/CD flow with environment tfvars
+
+```text
+GitHub branch or manual input
+        |
+        v
+Resolve environment
+        |
+        v
+Select terraform/environments/<env>.tfvars
+        |
+        v
+Terraform init with S3 backend key: todo-3tier-simple/<env>/terraform.tfstate
+        |
+        v
+Terraform validate and plan
+        |
+        v
+Build Docker images
+        |
+        v
+Push images to ECR path: todo-3tier-simple/<env>/...
+        |
+        v
+Test containers
+        |
+        v
+Terraform apply using the selected tfvars file
 ```

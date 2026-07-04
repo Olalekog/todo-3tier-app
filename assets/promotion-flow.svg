@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="560" viewBox="0 0 1100 560">
+  <defs>
+    <style>
+      .title{font:700 26px Arial, sans-serif;fill:#111827}
+      .label{font:600 17px Arial, sans-serif;fill:#111827}
+      .small{font:14px Arial, sans-serif;fill:#374151}
+      .box{fill:#f9fafb;stroke:#374151;stroke-width:2;rx:14}
+      .gate{fill:#fff7ed;stroke:#c2410c;stroke-width:2;rx:14}
+      .ok{fill:#ecfdf5;stroke:#047857;stroke-width:2;rx:14}
+      .deny{fill:#fef2f2;stroke:#b91c1c;stroke-width:2;rx:14}
+      .arrow{stroke:#111827;stroke-width:2.5;fill:none;marker-end:url(#arrow)}
+      .dash{stroke:#6b7280;stroke-width:2;stroke-dasharray:8 6;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#111827"/>
+    </marker>
+  </defs>
+  <rect width="1100" height="560" fill="#ffffff"/>
+  <text x="44" y="54" class="title">Environment Promotion Flow</text>
+
+  <rect x="70" y="105" width="220" height="92" class="box"/>
+  <text x="118" y="140" class="label">dev branch</text>
+  <text x="100" y="166" class="small">Build, test, deploy dev</text>
+
+  <rect x="430" y="105" width="220" height="92" class="ok"/>
+  <text x="466" y="140" class="label">PR: dev → uat</text>
+  <text x="460" y="166" class="small">Allowed promotion path</text>
+
+  <rect x="790" y="105" width="220" height="92" class="box"/>
+  <text x="836" y="140" class="label">uat branch</text>
+  <text x="826" y="166" class="small">Deploys UAT after merge</text>
+
+  <rect x="250" y="285" width="250" height="92" class="ok"/>
+  <text x="292" y="320" class="label">PR: uat → prod</text>
+  <text x="278" y="346" class="small">Allowed promotion path</text>
+
+  <rect x="600" y="285" width="250" height="92" class="gate"/>
+  <text x="642" y="320" class="label">prod approval gate</text>
+  <text x="626" y="346" class="small">GitHub Environment reviewers</text>
+
+  <rect x="430" y="435" width="250" height="82" class="box"/>
+  <text x="479" y="468" class="label">prod branch</text>
+  <text x="456" y="493" class="small">Deploys production after approval</text>
+
+  <rect x="70" y="435" width="250" height="82" class="deny"/>
+  <text x="116" y="468" class="label">Invalid PR paths</text>
+  <text x="92" y="493" class="small">Blocked by workflow guard</text>
+
+  <path d="M290 151 H430" class="arrow"/>
+  <path d="M650 151 H790" class="arrow"/>
+  <path d="M900 197 C900 250 500 240 500 285" class="arrow"/>
+  <path d="M500 331 H600" class="arrow"/>
+  <path d="M725 377 C725 420 620 420 610 435" class="arrow"/>
+  <path d="M250 475 H320" class="dash"/>
+  <text x="70" y="240" class="small">Allowed only: dev → uat, then uat → prod</text>
+  <text x="70" y="262" class="small">Direct dev → prod, feature → uat, or feature → prod pull requests fail.</text>
+</svg>

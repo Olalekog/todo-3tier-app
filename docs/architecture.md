@@ -64,3 +64,32 @@ network -> security-groups -> ecr -> database -> compute
 ```
 
 The `compute` module depends on outputs from the other modules because the EC2 instances need subnet IDs, security groups, Docker image URIs, and the RDS endpoint.
+
+
+## Terraform environment structure
+
+```text
+terraform/environments/dev.tfvars   -> dev VPC, subnets, EC2, RDS, and ECR paths
+terraform/environments/uat.tfvars   -> uat VPC, subnets, EC2, RDS, and ECR paths
+terraform/environments/prod.tfvars  -> prod VPC, subnets, EC2, RDS, and ECR paths
+```
+
+Each environment uses the same reusable modules but a different `.tfvars` file. This allows the same code to deploy separate infrastructure stacks for dev, uat, and prod.
+
+
+## Promotion Flow
+
+```text
+dev -> uat -> prod
+```
+
+Only these pull request paths are allowed by the workflow:
+
+```text
+dev -> uat
+uat -> prod
+```
+
+Production deployment is protected by the GitHub Environment named `prod`. Configure required reviewers on that environment to create the approval gate before production Terraform apply runs.
+
+![Promotion Flow](../assets/promotion-flow.svg)
