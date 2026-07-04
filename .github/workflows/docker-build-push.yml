@@ -40,6 +40,7 @@ env:
   TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION }}
   TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
   DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+  APP_DIR: .
 
 jobs:
   set-environment:
@@ -117,8 +118,8 @@ jobs:
             fi
           done
 
-          if [[ ! -f "terraform/environments/${{ needs.set-environment.outputs.environment }}.tfvars" ]]; then
-            echo "Missing tfvars file: terraform/environments/${{ needs.set-environment.outputs.environment }}.tfvars"
+          if [[ ! -f "${APP_DIR}/terraform/environments/${{ needs.set-environment.outputs.environment }}.tfvars" ]]; then
+            echo "Missing tfvars file: ${APP_DIR}/terraform/environments/${{ needs.set-environment.outputs.environment }}.tfvars"
             exit 1
           fi
 
@@ -157,7 +158,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform Init
-        working-directory: terraform
+        working-directory: ${{ env.APP_DIR }}/terraform
         run: |
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
@@ -166,7 +167,7 @@ jobs:
             -backend-config="encrypt=true"
 
       - name: Terraform Apply ECR Only
-        working-directory: terraform
+        working-directory: ${{ env.APP_DIR }}/terraform
         run: |
           terraform apply -target=module.ecr -auto-approve \
             -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
@@ -209,8 +210,8 @@ jobs:
           FRONTEND_IMAGE_LATEST="${REGISTRY}/${{ needs.set-environment.outputs.frontend_repo }}:latest"
           BACKEND_IMAGE_LATEST="${REGISTRY}/${{ needs.set-environment.outputs.backend_repo }}:latest"
 
-          docker build -t "${FRONTEND_IMAGE_SHA}" -t "${FRONTEND_IMAGE_LATEST}" ./frontend
-          docker build -t "${BACKEND_IMAGE_SHA}" -t "${BACKEND_IMAGE_LATEST}" ./backend
+          docker build -t "${FRONTEND_IMAGE_SHA}" -t "${FRONTEND_IMAGE_LATEST}" "${APP_DIR}/frontend"
+          docker build -t "${BACKEND_IMAGE_SHA}" -t "${BACKEND_IMAGE_LATEST}" "${APP_DIR}/backend"
 
           echo "frontend_image=${FRONTEND_IMAGE_SHA}" >> "$GITHUB_OUTPUT"
           echo "backend_image=${BACKEND_IMAGE_SHA}" >> "$GITHUB_OUTPUT"

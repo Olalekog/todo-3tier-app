@@ -66,6 +66,7 @@ env:
   TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION }}
   TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
   DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+  APP_DIR: .
 
 jobs:
   validate-promotion-path:
@@ -140,7 +141,7 @@ jobs:
             IMAGE_TAG="latest"
           fi
 
-          TFVARS_FILE="terraform/environments/${ENVIRONMENT}.tfvars"
+          TFVARS_FILE="${APP_DIR}/terraform/environments/${ENVIRONMENT}.tfvars"
 
           echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
           echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
@@ -189,6 +190,10 @@ jobs:
 
           if [[ ! -f "${{ needs.set-environment.outputs.tfvars_file }}" ]]; then
             echo "Missing tfvars file: ${{ needs.set-environment.outputs.tfvars_file }}"
+            echo "Current directory:"
+            pwd
+            echo "Available environment files:"
+            find "${APP_DIR}/terraform" -maxdepth 3 -type f | sort || true
             exit 1
           fi
 
@@ -210,11 +215,11 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform Format Check
-        working-directory: terraform
+        working-directory: ${{ env.APP_DIR }}/terraform
         run: terraform fmt -check -recursive
 
       - name: Terraform Init
-        working-directory: terraform
+        working-directory: ${{ env.APP_DIR }}/terraform
         run: |
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
@@ -223,11 +228,11 @@ jobs:
             -backend-config="encrypt=true"
 
       - name: Terraform Validate
-        working-directory: terraform
+        working-directory: ${{ env.APP_DIR }}/terraform
         run: terraform validate
 
       - name: Terraform Plan
-        working-directory: terraform
+        working-directory: ${{ env.APP_DIR }}/terraform
         run: |
           terraform plan \
             -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
@@ -267,7 +272,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform Init
-        working-directory: terraform
+        working-directory: ${{ env.APP_DIR }}/terraform
         run: |
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
@@ -277,7 +282,7 @@ jobs:
 
       - name: Terraform Apply Full Stack
         if: needs.set-environment.outputs.terraform_action == 'apply'
-        working-directory: terraform
+        working-directory: ${{ env.APP_DIR }}/terraform
         run: |
           terraform apply -auto-approve \
             -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
@@ -286,7 +291,7 @@ jobs:
 
       - name: Terraform Destroy
         if: needs.set-environment.outputs.terraform_action == 'destroy'
-        working-directory: terraform
+        working-directory: ${{ env.APP_DIR }}/terraform
         run: |
           terraform destroy -auto-approve \
             -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
@@ -295,5 +300,5 @@ jobs:
 
       - name: Terraform Outputs
         if: needs.set-environment.outputs.terraform_action == 'apply'
-        working-directory: terraform
+        working-directory: ${{ env.APP_DIR }}/terraform
         run: terraform output

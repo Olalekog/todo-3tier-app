@@ -903,3 +903,142 @@ Do not place these files under `.github/workflows` or another folder. They must 
 -var-file="environments/${ENVIRONMENT}.tfvars"
 ```
 
+
+
+## Repository Folder Layout Update
+
+This project is designed to live directly at the repository root. The GitHub workflows remain under `.github/workflows`, while application and Terraform code live directly under `frontend/`, `backend/`, and `terraform/`.
+
+```text
+repo-root/
+├── .github/
+│   └── workflows/
+│       ├── docker-build-push.yml
+│       └── deploy.yml
+└── 
+    ├── frontend/
+    ├── backend/
+    ├── terraform/
+    │   ├── environments/
+    │   │   ├── dev.tfvars
+    │   │   ├── uat.tfvars
+    │   │   └── prod.tfvars
+    │   ├── modules/
+    │   │   ├── network/
+    │   │   ├── security-groups/
+    │   │   ├── ecr/
+    │   │   ├── compute/
+    │   │   └── database/
+    │   ├── templates/
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   ├── outputs.tf
+    │   └── versions.tf
+    ├── assets/
+    └── docs/
+```
+
+### Workflow path configuration
+
+Both workflows now use:
+
+```yaml
+env:
+  APP_DIR: .
+```
+
+Terraform commands run from:
+
+```text
+terraform
+```
+
+The environment tfvars files are resolved as:
+
+```text
+terraform/environments/dev.tfvars
+terraform/environments/uat.tfvars
+terraform/environments/prod.tfvars
+```
+
+Docker build contexts are:
+
+```text
+frontend
+backend
+```
+
+---
+
+## Root Repository Layout Update
+
+The project now lives directly under the repository root. Do not place the code inside another nested `todo-3tier-app/` folder.
+
+```text
+repo-root/
+├── .github/
+│   └── workflows/
+│       ├── docker-build-push.yml
+│       └── deploy.yml
+├── frontend/
+│   ├── Dockerfile
+│   ├── package.json
+│   ├── index.html
+│   └── src/
+├── backend/
+│   ├── Dockerfile
+│   ├── main.py
+│   └── requirements.txt
+├── terraform/
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   ├── versions.tf
+│   ├── environments/
+│   │   ├── dev.tfvars
+│   │   ├── uat.tfvars
+│   │   └── prod.tfvars
+│   ├── modules/
+│   │   ├── network/
+│   │   ├── security-groups/
+│   │   ├── ecr/
+│   │   ├── compute/
+│   │   └── database/
+│   └── templates/
+│       ├── user_data_frontend.sh.tftpl
+│       └── user_data_backend.sh.tftpl
+├── docs/
+├── assets/
+├── README.md
+└── .gitignore
+```
+
+### Updated workflow paths
+
+The workflows now use:
+
+```yaml
+APP_DIR: .
+```
+
+The Docker build workflow uses these contexts:
+
+```text
+frontend
+backend
+```
+
+The Terraform deploy workflow uses:
+
+```text
+working-directory: ./terraform
+-var-file="environments/${ENVIRONMENT}.tfvars"
+```
+
+### Environment tfvars mapping
+
+```text
+dev branch  -> terraform/environments/dev.tfvars
+uat branch  -> terraform/environments/uat.tfvars
+prod branch -> terraform/environments/prod.tfvars
+```
