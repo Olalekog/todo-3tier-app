@@ -112,9 +112,63 @@ jobs:
           echo "frontend_image_latest=${ECR_REGISTRY}/${FRONTEND_REPO}:latest" >> "${GITHUB_OUTPUT}"
           echo "backend_image_latest=${ECR_REGISTRY}/${BACKEND_REPO}:latest" >> "${GITHUB_OUTPUT}"
 
+
+  dockerfile-changes:
+    name: Check Dockerfile Changes
+    needs: resolve
+    runs-on: ubuntu-latest
+    outputs:
+      dockerfile_changed: ${{ steps.changes.outputs.dockerfile_changed }}
+      changed_files: ${{ steps.changes.outputs.changed_files }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check whether Dockerfiles changed
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Manual workflow runs are intentional builds.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Manual workflow run detected. Docker build is enabled."
+            echo "dockerfile_changed=true" >> "${GITHUB_OUTPUT}"
+            echo "changed_files=workflow_dispatch" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          BEFORE_SHA="${{ github.event.before }}"
+          AFTER_SHA="${{ github.sha }}"
+
+          # First push to a branch may have a zero BEFORE SHA.
+          if [[ -z "${BEFORE_SHA}" || "${BEFORE_SHA}" =~ ^0+$ ]]; then
+            BEFORE_SHA="HEAD~1"
+          fi
+
+          CHANGED_FILES="$(git diff --name-only "${BEFORE_SHA}" "${AFTER_SHA}" || true)"
+          echo "Changed files:"
+          echo "${CHANGED_FILES}"
+
+          if echo "${CHANGED_FILES}" | grep -E '^(frontend/Dockerfile|backend/Dockerfile)$' >/dev/null 2>&1; then
+            echo "Dockerfile change detected. Docker build/test/push will run."
+            echo "dockerfile_changed=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "No Dockerfile change detected. Docker build/test/push will be skipped."
+            echo "dockerfile_changed=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+          # Keep output single-line safe.
+          echo "changed_files=$(echo "${CHANGED_FILES}" | tr '\n' ' ' | sed 's/[[:space:]]*$//')" >> "${GITHUB_OUTPUT}"
+
   build:
     name: Build Docker Images
-    needs: resolve
+    needs:
+      - resolve
+      - dockerfile-changes
+    if: needs.dockerfile-changes.outputs.dockerfile_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -162,7 +216,9 @@ jobs:
     name: Test Docker Images
     needs:
       - resolve
+      - dockerfile-changes
       - build
+    if: needs.dockerfile-changes.outputs.dockerfile_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download Docker image artifacts
@@ -266,7 +322,9 @@ jobs:
     name: Push Docker Images to ECR
     needs:
       - resolve
+      - dockerfile-changes
       - test
+    if: needs.dockerfile-changes.outputs.dockerfile_changed == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -314,12 +372,29 @@ jobs:
           docker push "${{ needs.resolve.outputs.backend_image }}"
           docker push "${{ needs.resolve.outputs.backend_image_latest }}"
 
+
+  skip-no-dockerfile-change:
+    name: Skip Build - No Dockerfile Change
+    needs:
+      - resolve
+      - dockerfile-changes
+    if: needs.dockerfile-changes.outputs.dockerfile_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain skip
+        shell: bash
+        run: |
+          echo "No frontend/Dockerfile or backend/Dockerfile change was detected."
+          echo "Skipping Docker build, test, push, and automatic dev deploy."
+          echo "Changed files: ${{ needs.dockerfile-changes.outputs.changed_files }}"
+
   deploy-dev:
     name: Deploy Dev With New Image
     needs:
       - resolve
+      - dockerfile-changes
       - push
-    if: needs.resolve.outputs.environment == 'dev'
+    if: needs.resolve.outputs.environment == 'dev' && needs.dockerfile-changes.outputs.dockerfile_changed == 'true'
     uses: ./.github/workflows/deploy.yml
     with:
       environment: dev
