@@ -52,14 +52,6 @@ on:
       - "terraform/**"
       - ".github/workflows/deploy.yml"
 
-  # Auto-deploy dev after Docker images are successfully built, tested, and pushed
-  workflow_run:
-    workflows:
-      - Docker Build Test Push
-    types:
-      - completed
-    branches:
-      - dev
 
 permissions:
   id-token: write
@@ -123,17 +115,7 @@ jobs:
         run: |
           SHOULD_DEPLOY="true"
 
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            if [[ "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
-              echo "Docker workflow did not succeed. Skipping deploy."
-              SHOULD_DEPLOY="false"
-            fi
-
-            ENVIRONMENT="dev"
-            ACTION="apply"
-            IMAGE_TAG="${{ github.event.workflow_run.head_sha }}"
-
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             ENVIRONMENT="${{ github.event.inputs.environment }}"
             ACTION="${{ github.event.inputs.action }}"
             IMAGE_TAG="${{ github.event.inputs.image_tag }}"

@@ -26,6 +26,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  actions: write
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
@@ -303,3 +304,27 @@ jobs:
           echo "Frontend latest image: ${{ needs.resolve.outputs.frontend_image_latest }}"
           echo "Backend SHA image: ${{ needs.resolve.outputs.backend_image }}"
           echo "Backend latest image: ${{ needs.resolve.outputs.backend_image_latest }}"
+
+  trigger-dev-deploy:
+    name: Trigger Dev Deploy Workflow
+    runs-on: ubuntu-latest
+    needs:
+      - resolve
+      - push
+    if: github.event_name == 'push' && needs.resolve.outputs.environment == 'dev'
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Trigger deploy.yml for dev with new image tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Triggering deploy.yml for dev with image tag: ${IMAGE_TAG}"
+          gh workflow run deploy.yml \
+            --ref dev \
+            -f environment=dev \
+            -f action=apply \
+            -f image_tag="${IMAGE_TAG}"
