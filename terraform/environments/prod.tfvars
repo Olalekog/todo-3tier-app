@@ -5,9 +5,9 @@ environment  = "prod"
 
 vpc_cidr                 = "10.60.0.0/16"
 az_count                 = 2
-public_subnet_cidrs      = ['10.60.1.0/24', '10.60.2.0/24']
-private_app_subnet_cidrs = ['10.60.11.0/24', '10.60.12.0/24']
-private_db_subnet_cidrs  = ['10.60.21.0/24', '10.60.22.0/24']
+public_subnet_cidrs      = ["10.60.1.0/24", "10.60.2.0/24"]
+private_app_subnet_cidrs = ["10.60.11.0/24", "10.60.12.0/24"]
+private_db_subnet_cidrs  = ["10.60.21.0/24", "10.60.22.0/24"]
 
 allowed_http_cidr = "0.0.0.0/0"
 allowed_ssh_cidr  = "YOUR_PUBLIC_IP/32"

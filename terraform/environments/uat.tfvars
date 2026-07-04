@@ -5,9 +5,9 @@ environment  = "uat"
 
 vpc_cidr                 = "10.50.0.0/16"
 az_count                 = 2
-public_subnet_cidrs      = ['10.50.1.0/24', '10.50.2.0/24']
-private_app_subnet_cidrs = ['10.50.11.0/24', '10.50.12.0/24']
-private_db_subnet_cidrs  = ['10.50.21.0/24', '10.50.22.0/24']
+public_subnet_cidrs      = ["10.50.1.0/24", "10.50.2.0/24"]
+private_app_subnet_cidrs = ["10.50.11.0/24", "10.50.12.0/24"]
+private_db_subnet_cidrs  = ["10.50.21.0/24", "10.50.22.0/24"]
 
 allowed_http_cidr = "0.0.0.0/0"
 allowed_ssh_cidr  = "YOUR_PUBLIC_IP/32"
