@@ -13,7 +13,7 @@ allowed_http_cidr = "0.0.0.0/0"
 allowed_ssh_cidr  = "YOUR_PUBLIC_IP/32"
 key_name          = null
 
-instance_type        = "t2.micro"
+instance_type        = "t3.micro"
 image_tag            = "latest"
 db_name              = "tododb"
 db_username          = "todo_admin"
