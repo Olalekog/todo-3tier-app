@@ -259,7 +259,6 @@ jobs:
           terraform plan \
             -var-file="${TFVARS_FILE}" \
             -var="aws_region=${AWS_REGION}" \
-            -var="aws_account_id=${AWS_ACCOUNT_ID}" \
             -var="project_name=${PROJECT_NAME}" \
             -var="db_password=${DB_PASSWORD}" \
             -var="image_tag=${IMAGE_TAG}" \
@@ -464,7 +463,6 @@ jobs:
           terraform destroy -auto-approve \
             -var-file="${TFVARS_FILE}" \
             -var="aws_region=${AWS_REGION}" \
-            -var="aws_account_id=${AWS_ACCOUNT_ID}" \
             -var="project_name=${PROJECT_NAME}" \
             -var="db_password=${DB_PASSWORD}" \
             -var="image_tag=${IMAGE_TAG}"
