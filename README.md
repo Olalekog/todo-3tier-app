@@ -876,3 +876,30 @@ Test containers
         v
 Terraform apply using the selected tfvars file
 ```
+
+---
+
+## Fix: required environment tfvars files
+
+The deploy workflow validates that the environment-specific tfvars file exists before running Terraform:
+
+```text
+terraform/environments/dev.tfvars
+terraform/environments/uat.tfvars
+terraform/environments/prod.tfvars
+```
+
+The selected file is based on branch or manual workflow input:
+
+```text
+dev branch  -> terraform/environments/dev.tfvars
+uat branch  -> terraform/environments/uat.tfvars
+prod branch -> terraform/environments/prod.tfvars
+```
+
+Do not place these files under `.github/workflows` or another folder. They must stay under `terraform/environments/` because the deploy workflow runs Terraform from the `terraform` directory and passes:
+
+```bash
+-var-file="environments/${ENVIRONMENT}.tfvars"
+```
+
