@@ -1,4 +1,4 @@
-name: Terraform Deploy Todo App
+name: Terraform Deploy
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
       - uat
       - prod
     paths:
-      - "terraform/**"
+      - "todo-3tier-app/terraform/**"
       - ".github/workflows/deploy.yml"
 
   pull_request:
@@ -21,57 +21,110 @@ on:
       - edited
       - ready_for_review
     paths:
-      - "terraform/**"
+      - "todo-3tier-app/terraform/**"
       - ".github/workflows/deploy.yml"
 
   workflow_dispatch:
     inputs:
       environment:
-        description: "Environment to deploy"
+        description: "Target environment"
         required: true
-        default: "dev"
         type: choice
         options:
           - dev
           - uat
           - prod
-      terraform_action:
-        description: "Terraform action to run"
+        default: dev
+      action:
+        description: "Terraform action"
         required: true
-        default: "plan"
         type: choice
         options:
           - plan
           - apply
           - destroy
+        default: plan
       image_tag:
-        description: "Docker image tag to deploy. Use a Git SHA from the Docker workflow, or latest."
-        required: true
-        default: "latest"
+        description: "Docker image tag to deploy. Use latest or a Git SHA."
+        required: false
         type: string
+        default: latest
 
 permissions:
   id-token: write
   contents: read
   pull-requests: read
 
-concurrency:
-  group: todo-3tier-deploy-${{ github.event_name }}-${{ github.ref_name }}-${{ github.event.inputs.environment || github.base_ref || github.ref_name }}
-  cancel-in-progress: false
-
 env:
+  APP_DIR: todo-3tier-app
   AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
   PROJECT_NAME: ${{ vars.PROJECT_NAME }}
   BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
-  TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION }}
   TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION }}
   DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-  APP_DIR: .
 
 jobs:
+  set-environment:
+    name: Set Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set.outputs.environment }}
+      terraform_action: ${{ steps.set.outputs.terraform_action }}
+      image_tag: ${{ steps.set.outputs.image_tag }}
+      tfvars_file: ${{ steps.set.outputs.tfvars_file }}
+    steps:
+      - name: Resolve environment and action
+        id: set
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+            TERRAFORM_ACTION="${{ github.event.inputs.action }}"
+            IMAGE_TAG="${{ github.event.inputs.image_tag }}"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            TARGET_BRANCH="${{ github.base_ref }}"
+            case "${TARGET_BRANCH}" in
+              uat) ENVIRONMENT="uat" ;;
+              prod) ENVIRONMENT="prod" ;;
+              *) echo "Unsupported PR target branch: ${TARGET_BRANCH}"; exit 1 ;;
+            esac
+            TERRAFORM_ACTION="plan"
+            IMAGE_TAG="latest"
+          else
+            BRANCH="${GITHUB_REF_NAME}"
+            case "${BRANCH}" in
+              dev) ENVIRONMENT="dev" ;;
+              uat) ENVIRONMENT="uat" ;;
+              prod) ENVIRONMENT="prod" ;;
+              *) echo "Unsupported branch: ${BRANCH}"; exit 1 ;;
+            esac
+            TERRAFORM_ACTION="apply"
+            IMAGE_TAG="latest"
+          fi
+
+          if [[ -z "${IMAGE_TAG}" ]]; then
+            IMAGE_TAG="latest"
+          fi
+
+          TFVARS_FILE="${APP_DIR}/terraform/environments/${ENVIRONMENT}.tfvars"
+
+          echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
+          echo "terraform_action=${TERRAFORM_ACTION}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
+
+          echo "Environment: ${ENVIRONMENT}"
+          echo "Terraform action: ${TERRAFORM_ACTION}"
+          echo "Image tag: ${IMAGE_TAG}"
+          echo "tfvars file: ${TFVARS_FILE}"
+
   validate-promotion-path:
     name: Validate Promotion Path
     runs-on: ubuntu-latest
+    needs:
+      - set-environment
     if: github.event_name == 'pull_request'
     steps:
       - name: Validate source and target branch
@@ -90,75 +143,18 @@ jobs:
 
           if [[ "${TARGET_BRANCH}" == "prod" && "${SOURCE_BRANCH}" == "uat" ]]; then
             echo "Valid promotion path: uat -> prod"
-            echo "Production deployment requires GitHub Environment approval on prod after merge."
             exit 0
           fi
 
-          echo "Invalid promotion path."
-          echo "Allowed promotion paths are:"
-          echo "  dev -> uat"
-          echo "  uat -> prod"
+          echo "Invalid promotion path. Allowed paths are dev -> uat and uat -> prod."
           exit 1
 
-  set-environment:
-    name: Resolve Deployment Environment
-    runs-on: ubuntu-latest
-    outputs:
-      environment: ${{ steps.resolve.outputs.environment }}
-      tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
-      terraform_action: ${{ steps.resolve.outputs.terraform_action }}
-      image_tag: ${{ steps.resolve.outputs.image_tag }}
-    steps:
-      - name: Resolve environment, action, and image tag
-        id: resolve
-        shell: bash
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            ENVIRONMENT="${{ github.event.inputs.environment }}"
-            TERRAFORM_ACTION="${{ github.event.inputs.terraform_action }}"
-            IMAGE_TAG="${{ github.event.inputs.image_tag }}"
-          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            ENVIRONMENT="${{ github.base_ref }}"
-            TERRAFORM_ACTION="plan"
-            IMAGE_TAG="latest"
-          else
-            case "${{ github.ref_name }}" in
-              dev)
-                ENVIRONMENT="dev"
-                ;;
-              uat)
-                ENVIRONMENT="uat"
-                ;;
-              prod)
-                ENVIRONMENT="prod"
-                ;;
-              *)
-                echo "Unsupported branch: ${{ github.ref_name }}"
-                exit 1
-                ;;
-            esac
-            TERRAFORM_ACTION="apply"
-            IMAGE_TAG="latest"
-          fi
-
-          TFVARS_FILE="${APP_DIR}/terraform/environments/${ENVIRONMENT}.tfvars"
-
-          echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
-          echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
-          echo "terraform_action=${TERRAFORM_ACTION}" >> "$GITHUB_OUTPUT"
-          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
-
-          echo "Environment: ${ENVIRONMENT}"
-          echo "TFVars file: ${TFVARS_FILE}"
-          echo "Terraform action: ${TERRAFORM_ACTION}"
-          echo "Image tag: ${IMAGE_TAG}"
-
-  terraform-validate-plan:
-    name: Terraform Validate and Plan
+  validate:
+    name: Validate Terraform
     runs-on: ubuntu-latest
     needs:
-      - validate-promotion-path
       - set-environment
+      - validate-promotion-path
     if: |
       always() &&
       (
@@ -169,45 +165,41 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate required variables
+      - name: Validate required variables and files
         shell: bash
         run: |
           REQUIRED_VARS=(
             "AWS_REGION"
+            "AWS_ACCOUNT_ID"
             "PROJECT_NAME"
             "BOOTSTRAP_ROLE_ARN"
-            "TERRAFORM_VERSION"
             "TF_STATE_BUCKET"
-            "DB_PASSWORD"
+            "TERRAFORM_VERSION"
           )
 
           for VAR_NAME in "${REQUIRED_VARS[@]}"; do
             if [[ -z "${!VAR_NAME}" ]]; then
-              echo "Missing required GitHub variable or secret: ${VAR_NAME}"
+              echo "Missing required GitHub variable: ${VAR_NAME}"
               exit 1
             fi
           done
 
-          if [[ ! -f "${{ needs.set-environment.outputs.tfvars_file }}" ]]; then
-            echo "Missing tfvars file: ${{ needs.set-environment.outputs.tfvars_file }}"
-            echo "Current directory:"
-            pwd
-            echo "Available environment files:"
-            find "${APP_DIR}/terraform" -maxdepth 3 -type f | sort || true
+          if [[ -z "${DB_PASSWORD}" && "${{ needs.set-environment.outputs.terraform_action }}" != "destroy" ]]; then
+            echo "Missing required GitHub secret: DB_PASSWORD"
             exit 1
           fi
 
-          echo "Required variables and tfvars file are present."
+          TFVARS_FILE="${{ needs.set-environment.outputs.tfvars_file }}"
+          if [[ ! -f "${TFVARS_FILE}" ]]; then
+            echo "Missing tfvars file: ${TFVARS_FILE}"
+            echo "Current directory:"
+            pwd
+            echo "Available Terraform files:"
+            find . -maxdepth 5 -type f | sort
+            exit 1
+          fi
 
-      - name: Configure AWS credentials using GitHub OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions
-
-      - name: Confirm AWS identity
-        run: aws sts get-caller-identity
+          echo "Using tfvars file: ${TFVARS_FILE}"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -231,29 +223,164 @@ jobs:
         working-directory: ${{ env.APP_DIR }}/terraform
         run: terraform validate
 
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    needs:
+      - set-environment
+      - validate
+    if: needs.validate.result == 'success'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Confirm AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.APP_DIR }}/terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${PROJECT_NAME}/${{ needs.set-environment.outputs.environment }}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
       - name: Terraform Plan
         working-directory: ${{ env.APP_DIR }}/terraform
         run: |
           terraform plan \
             -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
+            -var="aws_region=${AWS_REGION}" \
+            -var="aws_account_id=${AWS_ACCOUNT_ID}" \
+            -var="project_name=${PROJECT_NAME}" \
             -var="db_password=${DB_PASSWORD}" \
             -var="image_tag=${{ needs.set-environment.outputs.image_tag }}" \
             -out=tfplan
 
-  terraform-deploy:
-    name: Terraform Deploy
+  apply-nonprod:
+    name: Terraform Apply Non-Prod
     runs-on: ubuntu-latest
     needs:
       - set-environment
-      - terraform-validate-plan
+      - plan
     if: |
-      always() &&
-      github.event_name != 'pull_request' &&
-      needs.terraform-validate-plan.result == 'success' &&
-      (
-        needs.set-environment.outputs.terraform_action == 'apply' ||
-        needs.set-environment.outputs.terraform_action == 'destroy'
-      )
+      needs.plan.result == 'success' &&
+      needs.set-environment.outputs.terraform_action == 'apply' &&
+      needs.set-environment.outputs.environment != 'prod'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.APP_DIR }}/terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${PROJECT_NAME}/${{ needs.set-environment.outputs.environment }}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Apply
+        working-directory: ${{ env.APP_DIR }}/terraform
+        run: |
+          terraform apply -auto-approve \
+            -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
+            -var="aws_region=${AWS_REGION}" \
+            -var="aws_account_id=${AWS_ACCOUNT_ID}" \
+            -var="project_name=${PROJECT_NAME}" \
+            -var="db_password=${DB_PASSWORD}" \
+            -var="image_tag=${{ needs.set-environment.outputs.image_tag }}"
+
+      - name: Terraform Outputs
+        working-directory: ${{ env.APP_DIR }}/terraform
+        run: terraform output
+
+  apply-prod:
+    name: Terraform Apply Prod
+    runs-on: ubuntu-latest
+    needs:
+      - set-environment
+      - plan
+    if: |
+      needs.plan.result == 'success' &&
+      needs.set-environment.outputs.terraform_action == 'apply' &&
+      needs.set-environment.outputs.environment == 'prod'
+    environment: prod
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.APP_DIR }}/terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${PROJECT_NAME}/${{ needs.set-environment.outputs.environment }}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Apply
+        working-directory: ${{ env.APP_DIR }}/terraform
+        run: |
+          terraform apply -auto-approve \
+            -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
+            -var="aws_region=${AWS_REGION}" \
+            -var="aws_account_id=${AWS_ACCOUNT_ID}" \
+            -var="project_name=${PROJECT_NAME}" \
+            -var="db_password=${DB_PASSWORD}" \
+            -var="image_tag=${{ needs.set-environment.outputs.image_tag }}"
+
+      - name: Terraform Outputs
+        working-directory: ${{ env.APP_DIR }}/terraform
+        run: terraform output
+
+  destroy:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+    needs:
+      - set-environment
+      - validate
+    if: |
+      needs.validate.result == 'success' &&
+      github.event_name == 'workflow_dispatch' &&
+      needs.set-environment.outputs.terraform_action == 'destroy'
     environment: ${{ needs.set-environment.outputs.environment }}
     steps:
       - name: Checkout repository
@@ -280,25 +407,13 @@ jobs:
             -backend-config="region=${AWS_REGION}" \
             -backend-config="encrypt=true"
 
-      - name: Terraform Apply Full Stack
-        if: needs.set-environment.outputs.terraform_action == 'apply'
-        working-directory: ${{ env.APP_DIR }}/terraform
-        run: |
-          terraform apply -auto-approve \
-            -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
-            -var="db_password=${DB_PASSWORD}" \
-            -var="image_tag=${{ needs.set-environment.outputs.image_tag }}"
-
       - name: Terraform Destroy
-        if: needs.set-environment.outputs.terraform_action == 'destroy'
         working-directory: ${{ env.APP_DIR }}/terraform
         run: |
           terraform destroy -auto-approve \
             -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
+            -var="aws_region=${AWS_REGION}" \
+            -var="aws_account_id=${AWS_ACCOUNT_ID}" \
+            -var="project_name=${PROJECT_NAME}" \
             -var="db_password=${DB_PASSWORD}" \
             -var="image_tag=${{ needs.set-environment.outputs.image_tag }}"
-
-      - name: Terraform Outputs
-        if: needs.set-environment.outputs.terraform_action == 'apply'
-        working-directory: ${{ env.APP_DIR }}/terraform
-        run: terraform output
