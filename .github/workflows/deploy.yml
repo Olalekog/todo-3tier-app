@@ -236,6 +236,47 @@ jobs:
             -backend-config="region=${AWS_REGION}" \
             -backend-config="encrypt=true"
 
+
+      - name: Import existing ECR repositories if already created
+        if: env.ACTION != 'destroy'
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FRONTEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
+          BACKEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
+
+          import_ecr_repo_if_needed() {
+            local terraform_address="$1"
+            local repository_name="$2"
+
+            echo "Checking ECR repository: ${repository_name}"
+
+            if aws ecr describe-repositories --repository-names "${repository_name}" >/dev/null 2>&1; then
+              echo "ECR repository exists in AWS: ${repository_name}"
+
+              if terraform state show "${terraform_address}" >/dev/null 2>&1; then
+                echo "Repository is already managed by Terraform state: ${terraform_address}"
+              else
+                echo "Repository exists but is not in Terraform state. Importing: ${repository_name}"
+                terraform import \
+                  -var-file="${TFVARS_FILE}" \
+                  -var="aws_region=${AWS_REGION}" \
+                  -var="project_name=${PROJECT_NAME}" \
+                  -var="db_password=${DB_PASSWORD}" \
+                  -var="image_tag=${IMAGE_TAG}" \
+                  "${terraform_address}" \
+                  "${repository_name}"
+              fi
+            else
+              echo "ECR repository does not exist yet. Terraform will create it: ${repository_name}"
+            fi
+          }
+
+          import_ecr_repo_if_needed "module.ecr.aws_ecr_repository.frontend" "${FRONTEND_REPO}"
+          import_ecr_repo_if_needed "module.ecr.aws_ecr_repository.backend" "${BACKEND_REPO}"
+
       - name: Terraform Validate
         working-directory: terraform
         shell: bash
