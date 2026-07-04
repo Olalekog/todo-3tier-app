@@ -1,6 +1,6 @@
 # Local example only. Prefer terraform/environments/<env>.tfvars for real deployments.
 aws_region       = "us-east-1"
-project_name     = "todo-3tier-simple"
+project_name     = "react-js-application"
 environment      = "dev"
 image_tag        = "latest"
 allowed_ssh_cidr = "YOUR_PUBLIC_IP/32"

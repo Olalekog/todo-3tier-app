@@ -7,8 +7,8 @@ on:
       - uat
       - prod
     paths:
-      - "todo-3tier-app/frontend/**"
-      - "todo-3tier-app/backend/**"
+      - "frontend/**"
+      - "backend/**"
       - ".github/workflows/docker-build-push.yml"
 
   workflow_dispatch:

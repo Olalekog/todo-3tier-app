@@ -7,7 +7,7 @@ variable "aws_region" {
 variable "project_name" {
   description = "Project name used for resource naming"
   type        = string
-  default     = "todo-3tier-simple"
+  default     = "react-js-application"
 }
 
 variable "environment" {

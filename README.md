@@ -378,8 +378,8 @@ Push latest and Git SHA tags
 Image format:
 
 ```text
-866934333672.dkr.ecr.us-east-1.amazonaws.com/todo-3tier-simple/dev/todo-frontend:<git-sha>
-866934333672.dkr.ecr.us-east-1.amazonaws.com/todo-3tier-simple/dev/todo-backend:<git-sha>
+866934333672.dkr.ecr.us-east-1.amazonaws.com/react-js-application/dev/todo-frontend:<git-sha>
+866934333672.dkr.ecr.us-east-1.amazonaws.com/react-js-application/dev/todo-backend:<git-sha>
 ```
 
 Also pushed as:
@@ -456,7 +456,7 @@ GitHub Repo -> Settings -> Secrets and variables -> Actions -> Variables
 | Variable | Example Value |
 |---|---|
 | `AWS_REGION` | `us-east-1` |
-| `PROJECT_NAME` | `todo-3tier-simple` |
+| `PROJECT_NAME` | `react-js-application` |
 | `ENVIRONMENT` | `dev` |
 | `BOOTSTRAP_ROLE_ARN` | `arn:aws:iam::866934333672:role/react-js-application-github-actions-bootstrap-role` |
 | `TERRAFORM_VERSION` | `1.9.0` |
@@ -651,7 +651,7 @@ From the `terraform` directory:
 terraform fmt -recursive
 terraform init \
   -backend-config="bucket=react-js-application-terraform-state-866934333672" \
-  -backend-config="key=todo-3tier-simple/dev/terraform.tfstate" \
+  -backend-config="key=react-js-application/dev/terraform.tfstate" \
   -backend-config="region=us-east-1" \
   -backend-config="encrypt=true"
 terraform validate
@@ -808,9 +808,9 @@ prod branch -> terraform/environments/prod.tfvars -> prod environment
 The GitHub Actions workflow uses one S3 bucket, but stores each environment in a separate state key:
 
 ```text
-s3://react-js-application-terraform-state-866934333672/todo-3tier-simple/dev/terraform.tfstate
-s3://react-js-application-terraform-state-866934333672/todo-3tier-simple/uat/terraform.tfstate
-s3://react-js-application-terraform-state-866934333672/todo-3tier-simple/prod/terraform.tfstate
+s3://react-js-application-terraform-state-866934333672/react-js-application/dev/terraform.tfstate
+s3://react-js-application-terraform-state-866934333672/react-js-application/uat/terraform.tfstate
+s3://react-js-application-terraform-state-866934333672/react-js-application/prod/terraform.tfstate
 ```
 
 ### What belongs in each tfvars file
@@ -819,7 +819,7 @@ Each `.tfvars` file contains non-sensitive environment configuration:
 
 ```hcl
 aws_region   = "us-east-1"
-project_name = "todo-3tier-simple"
+project_name = "react-js-application"
 environment  = "dev"
 
 vpc_cidr                 = "10.40.0.0/16"
@@ -859,7 +859,7 @@ Resolve environment
 Select terraform/environments/<env>.tfvars
         |
         v
-Terraform init with S3 backend key: todo-3tier-simple/<env>/terraform.tfstate
+Terraform init with S3 backend key: react-js-application/<env>/terraform.tfstate
         |
         v
 Terraform validate and plan
@@ -868,7 +868,7 @@ Terraform validate and plan
 Build Docker images
         |
         v
-Push images to ECR path: todo-3tier-simple/<env>/...
+Push images to ECR path: react-js-application/<env>/...
         |
         v
 Test containers
@@ -907,7 +907,7 @@ Do not place these files under `.github/workflows` or another folder. They must 
 
 ## Repository Folder Layout Update
 
-This project is designed to live directly at the repository root. The GitHub workflows remain under `.github/workflows`, while application and Terraform code live directly under `frontend/`, `backend/`, and `terraform/`.
+This project is designed to live inside a repository repository root. The GitHub workflows remain at the repository root under `.github/workflows`, while application and Terraform code live under ``.
 
 ```text
 repo-root/
@@ -966,79 +966,4 @@ Docker build contexts are:
 ```text
 frontend
 backend
-```
-
----
-
-## Root Repository Layout Update
-
-The project now lives directly under the repository root. Do not place the code inside another nested `todo-3tier-app/` folder.
-
-```text
-repo-root/
-├── .github/
-│   └── workflows/
-│       ├── docker-build-push.yml
-│       └── deploy.yml
-├── frontend/
-│   ├── Dockerfile
-│   ├── package.json
-│   ├── index.html
-│   └── src/
-├── backend/
-│   ├── Dockerfile
-│   ├── main.py
-│   └── requirements.txt
-├── terraform/
-│   ├── main.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── versions.tf
-│   ├── environments/
-│   │   ├── dev.tfvars
-│   │   ├── uat.tfvars
-│   │   └── prod.tfvars
-│   ├── modules/
-│   │   ├── network/
-│   │   ├── security-groups/
-│   │   ├── ecr/
-│   │   ├── compute/
-│   │   └── database/
-│   └── templates/
-│       ├── user_data_frontend.sh.tftpl
-│       └── user_data_backend.sh.tftpl
-├── docs/
-├── assets/
-├── README.md
-└── .gitignore
-```
-
-### Updated workflow paths
-
-The workflows now use:
-
-```yaml
-APP_DIR: .
-```
-
-The Docker build workflow uses these contexts:
-
-```text
-frontend
-backend
-```
-
-The Terraform deploy workflow uses:
-
-```text
-working-directory: ./terraform
--var-file="environments/${ENVIRONMENT}.tfvars"
-```
-
-### Environment tfvars mapping
-
-```text
-dev branch  -> terraform/environments/dev.tfvars
-uat branch  -> terraform/environments/uat.tfvars
-prod branch -> terraform/environments/prod.tfvars
 ```

@@ -7,7 +7,7 @@ on:
       - uat
       - prod
     paths:
-      - "todo-3tier-app/terraform/**"
+      - "terraform/**"
       - ".github/workflows/deploy.yml"
 
   pull_request:
@@ -21,7 +21,7 @@ on:
       - edited
       - ready_for_review
     paths:
-      - "todo-3tier-app/terraform/**"
+      - "terraform/**"
       - ".github/workflows/deploy.yml"
 
   workflow_dispatch:

@@ -1,6 +1,6 @@
 # PROD environment Terraform variables
 aws_region   = "us-east-1"
-project_name = "todo-3tier-simple"
+project_name = "react-js-application"
 environment  = "prod"
 
 vpc_cidr                 = "10.60.0.0/16"
@@ -24,7 +24,7 @@ db_allocated_storage = 30
 # GitHub Actions passes db_password from the DB_PASSWORD secret.
 
 tags = {
-  Project     = "todo-3tier-simple"
+  Project     = "react-js-application"
   Environment = "prod"
   ManagedBy   = "Terraform"
 }

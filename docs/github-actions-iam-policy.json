@@ -44,7 +44,7 @@
         "ecr:BatchGetImage",
         "ecr:GetDownloadUrlForLayer"
       ],
-      "Resource": "arn:aws:ecr:us-east-1:866934333672:repository/todo-3tier-simple/*"
+      "Resource": "arn:aws:ecr:us-east-1:866934333672:repository/react-js-application/*"
     },
     {
       "Sid": "AllowECRLogin",
@@ -90,8 +90,8 @@
         "iam:PassRole"
       ],
       "Resource": [
-        "arn:aws:iam::866934333672:role/todo-3tier-simple-*",
-        "arn:aws:iam::866934333672:instance-profile/todo-3tier-simple-*"
+        "arn:aws:iam::866934333672:role/react-js-application-*",
+        "arn:aws:iam::866934333672:instance-profile/react-js-application-*"
       ]
     },
     {
