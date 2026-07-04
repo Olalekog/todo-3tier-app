@@ -51,6 +51,7 @@ jobs:
       backend_image_latest: ${{ steps.set.outputs.backend_image_latest }}
       frontend_image_revision: ${{ steps.set.outputs.frontend_image_revision }}
       backend_image_revision: ${{ steps.set.outputs.backend_image_revision }}
+      aws_account_id: ${{ steps.set.outputs.aws_account_id }}
     steps:
       - name: Resolve environment and image names
         id: set
@@ -74,6 +75,15 @@ jobs:
             IMAGE_TAG="${GITHUB_SHA}"
           fi
 
+          if [[ -z "${AWS_ACCOUNT_ID}" ]]; then
+            AWS_ACCOUNT_ID="$(echo "${BOOTSTRAP_ROLE_ARN}" | cut -d: -f5)"
+          fi
+
+          if [[ -z "${AWS_ACCOUNT_ID}" || ! "${AWS_ACCOUNT_ID}" =~ ^[0-9]{12}$ ]]; then
+            echo "Unable to resolve AWS_ACCOUNT_ID. Set the GitHub variable AWS_ACCOUNT_ID or use a valid BOOTSTRAP_ROLE_ARN."
+            exit 1
+          fi
+
           FRONTEND_REPOSITORY="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
           BACKEND_REPOSITORY="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
           ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
@@ -86,9 +96,11 @@ jobs:
           echo "backend_image_latest=${ECR_REGISTRY}/${BACKEND_REPOSITORY}:latest" >> "$GITHUB_OUTPUT"
           echo "frontend_image_revision=${ECR_REGISTRY}/${FRONTEND_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "backend_image_revision=${ECR_REGISTRY}/${BACKEND_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "aws_account_id=${AWS_ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
 
           echo "Environment: ${ENVIRONMENT}"
           echo "Image tag: ${IMAGE_TAG}"
+          echo "AWS account ID: ${AWS_ACCOUNT_ID}"
 
   docker-build-test-push:
     name: Build Test Push Docker Images
@@ -104,7 +116,6 @@ jobs:
         run: |
           REQUIRED_VARS=(
             "AWS_REGION"
-            "AWS_ACCOUNT_ID"
             "PROJECT_NAME"
             "BOOTSTRAP_ROLE_ARN"
           )
