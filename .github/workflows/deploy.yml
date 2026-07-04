@@ -16,6 +16,11 @@ on:
         required: false
         type: string
         default: latest
+      allow_replacement:
+        description: Allow Terraform plans that delete or replace resources
+        required: false
+        type: string
+        default: "false"
     secrets:
       DB_PASSWORD:
         required: true
@@ -43,6 +48,14 @@ on:
         description: Docker image tag to deploy
         required: false
         default: latest
+      allow_replacement:
+        description: Allow Terraform plans that delete or replace resources
+        required: false
+        type: choice
+        options:
+          - "false"
+          - "true"
+        default: "false"
 
   push:
     branches:
@@ -50,7 +63,6 @@ on:
       - uat
       - prod
     paths:
-      # Infrastructure changes should run the deploy build/test/deploy stages.
       - "terraform/**"
       - ".github/workflows/deploy.yml"
 
@@ -91,6 +103,7 @@ jobs:
       tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
       state_key: ${{ steps.resolve.outputs.state_key }}
       aws_account_id: ${{ steps.resolve.outputs.aws_account_id }}
+      allow_replacement: ${{ steps.resolve.outputs.allow_replacement }}
     steps:
       - name: Resolve deployment inputs
         id: resolve
@@ -101,11 +114,13 @@ jobs:
           INPUT_ENVIRONMENT="${{ inputs.environment || '' }}"
           INPUT_ACTION="${{ inputs.action || '' }}"
           INPUT_IMAGE_TAG="${{ inputs.image_tag || '' }}"
+          INPUT_ALLOW_REPLACEMENT="${{ inputs.allow_replacement || 'false' }}"
 
           if [[ -n "${INPUT_ENVIRONMENT}" ]]; then
             ENVIRONMENT="${INPUT_ENVIRONMENT}"
             ACTION="${INPUT_ACTION:-apply}"
             IMAGE_TAG="${INPUT_IMAGE_TAG:-latest}"
+            ALLOW_REPLACEMENT="${INPUT_ALLOW_REPLACEMENT:-false}"
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             BASE_BRANCH="${{ github.base_ref }}"
             HEAD_BRANCH="${{ github.head_ref }}"
@@ -126,6 +141,7 @@ jobs:
             ENVIRONMENT="${BASE_BRANCH}"
             ACTION="plan"
             IMAGE_TAG="latest"
+            ALLOW_REPLACEMENT="false"
           elif [[ "${{ github.event_name }}" == "push" ]]; then
             case "${GITHUB_REF_NAME}" in
               dev) ENVIRONMENT="dev"; ACTION="apply" ;;
@@ -133,8 +149,8 @@ jobs:
               prod) ENVIRONMENT="prod"; ACTION="plan" ;;
               *) echo "Unsupported branch for infrastructure deploy: ${GITHUB_REF_NAME}"; exit 1 ;;
             esac
-            # Infrastructure-only changes reuse the latest currently published Docker image.
             IMAGE_TAG="latest"
+            ALLOW_REPLACEMENT="false"
           else
             echo "Unsupported event without reusable or manual inputs: ${{ github.event_name }}"
             exit 1
@@ -148,6 +164,11 @@ jobs:
           case "${ACTION}" in
             plan|apply|destroy) ;;
             *) echo "Invalid action: ${ACTION}"; exit 1 ;;
+          esac
+
+          case "${ALLOW_REPLACEMENT}" in
+            true|false) ;;
+            *) echo "Invalid allow_replacement value: ${ALLOW_REPLACEMENT}. Use true or false."; exit 1 ;;
           esac
 
           if [[ -z "${IMAGE_TAG}" ]]; then
@@ -183,11 +204,13 @@ jobs:
           echo "tfvars_file=${TFVARS_FILE}" >> "${GITHUB_OUTPUT}"
           echo "state_key=${STATE_KEY}" >> "${GITHUB_OUTPUT}"
           echo "aws_account_id=${RESOLVED_AWS_ACCOUNT_ID}" >> "${GITHUB_OUTPUT}"
+          echo "allow_replacement=${ALLOW_REPLACEMENT}" >> "${GITHUB_OUTPUT}"
 
           echo "Environment: ${ENVIRONMENT}"
           echo "Action: ${ACTION}"
           echo "Image tag: ${IMAGE_TAG}"
           echo "State key: ${STATE_KEY}"
+          echo "Allow replacement: ${ALLOW_REPLACEMENT}"
 
   test:
     name: Test / Terraform Validate and Plan
@@ -195,12 +218,16 @@ jobs:
     needs:
       - build
     if: always() && needs.build.result == 'success'
+    outputs:
+      plan_has_changes: ${{ steps.plan.outputs.plan_has_changes }}
+      plan_has_destructive_changes: ${{ steps.plan.outputs.plan_has_destructive_changes }}
     env:
       ENVIRONMENT: ${{ needs.build.outputs.environment }}
       ACTION: ${{ needs.build.outputs.action }}
       IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
       TFVARS_FILE: ${{ needs.build.outputs.tfvars_file }}
       STATE_KEY: ${{ needs.build.outputs.state_key }}
+      ALLOW_REPLACEMENT: ${{ needs.build.outputs.allow_replacement }}
       DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
     steps:
       - name: Checkout repository
@@ -303,33 +330,73 @@ jobs:
         shell: bash
         run: terraform validate
 
-      - name: Terraform Plan
-        if: env.ACTION != 'destroy'
+      - name: Terraform Plan with no-change and replacement guard
+        id: plan
         working-directory: terraform
         shell: bash
         run: |
-          terraform plan \
-            -var-file="${TFVARS_FILE}" \
-            -var="aws_region=${AWS_REGION}" \
-            -var="project_name=${PROJECT_NAME}" \
-            -var="db_password=${DB_PASSWORD}" \
-            -var="image_tag=${IMAGE_TAG}" \
-            -out=tfplan
+          set -euo pipefail
 
-      - name: Terraform Destroy Plan
-        if: env.ACTION == 'destroy'
-        working-directory: terraform
-        shell: bash
-        run: |
-          terraform plan -destroy \
+          echo "plan_has_changes=false" >> "${GITHUB_OUTPUT}"
+          echo "plan_has_destructive_changes=false" >> "${GITHUB_OUTPUT}"
+
+          if [[ "${ACTION}" == "destroy" ]]; then
+            terraform plan -destroy \
+              -var-file="${TFVARS_FILE}" \
+              -var="aws_region=${AWS_REGION}" \
+              -var="project_name=${PROJECT_NAME}" \
+              -var="db_password=${DB_PASSWORD}" \
+              -var="image_tag=${IMAGE_TAG}" \
+              -out=tfplan
+            echo "plan_has_changes=true" >> "${GITHUB_OUTPUT}"
+            echo "plan_has_destructive_changes=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          set +e
+          terraform plan -detailed-exitcode \
             -var-file="${TFVARS_FILE}" \
             -var="aws_region=${AWS_REGION}" \
             -var="project_name=${PROJECT_NAME}" \
             -var="db_password=${DB_PASSWORD}" \
             -var="image_tag=${IMAGE_TAG}" \
             -out=tfplan
+          PLAN_EXIT_CODE=$?
+          set -e
+
+          if [[ "${PLAN_EXIT_CODE}" -eq 0 ]]; then
+            echo "Terraform detected no infrastructure changes. Apply will be skipped."
+            echo "plan_has_changes=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          elif [[ "${PLAN_EXIT_CODE}" -eq 2 ]]; then
+            echo "Terraform detected infrastructure changes."
+            echo "plan_has_changes=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "Terraform plan failed with exit code ${PLAN_EXIT_CODE}."
+            exit "${PLAN_EXIT_CODE}"
+          fi
+
+          terraform show -json tfplan > tfplan.json
+
+          DESTRUCTIVE_COUNT="$(jq '[.resource_changes[]? | select(.change.actions | index("delete"))] | length' tfplan.json)"
+
+          if [[ "${DESTRUCTIVE_COUNT}" -gt 0 ]]; then
+            echo "plan_has_destructive_changes=true" >> "${GITHUB_OUTPUT}"
+            echo "Terraform plan includes delete or replacement actions."
+            echo "The following resources would be deleted or replaced:"
+            jq -r '.resource_changes[]? | select(.change.actions | index("delete")) | "- " + .address + " actions=" + (.change.actions | join(","))' tfplan.json
+
+            if [[ "${ALLOW_REPLACEMENT}" != "true" ]]; then
+              echo "Blocking apply to avoid destroying or recreating application infrastructure."
+              echo "To allow intentional replacement, run workflow_dispatch with allow_replacement=true."
+              exit 1
+            fi
+          else
+            echo "No delete or replacement actions detected."
+          fi
 
       - name: Upload Terraform plan
+        if: steps.plan.outputs.plan_has_changes == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: terraform-plan-${{ env.ENVIRONMENT }}
@@ -342,7 +409,7 @@ jobs:
     needs:
       - build
       - test
-    if: always() && needs.test.result == 'success' && needs.build.outputs.action != 'plan' && needs.build.outputs.environment != 'prod'
+    if: always() && needs.test.result == 'success' && needs.test.outputs.plan_has_changes == 'true' && needs.build.outputs.action != 'plan' && needs.build.outputs.environment != 'prod'
     env:
       ENVIRONMENT: ${{ needs.build.outputs.environment }}
       ACTION: ${{ needs.build.outputs.action }}
@@ -394,7 +461,7 @@ jobs:
     needs:
       - build
       - test
-    if: always() && needs.test.result == 'success' && needs.build.outputs.action != 'plan' && needs.build.outputs.environment == 'prod'
+    if: always() && needs.test.result == 'success' && needs.test.outputs.plan_has_changes == 'true' && needs.build.outputs.action != 'plan' && needs.build.outputs.environment == 'prod'
     environment: prod
     env:
       ENVIRONMENT: ${{ needs.build.outputs.environment }}
