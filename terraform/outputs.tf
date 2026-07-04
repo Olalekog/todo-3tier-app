@@ -1,34 +1,44 @@
+output "frontend_instance_id" {
+  description = "Frontend EC2 instance ID."
+  value       = module.frontend_compute.instance_id
+}
+
 output "frontend_public_ip" {
-  description = "Public IP of the React frontend EC2 instance"
-  value       = module.compute.frontend_public_ip
+  description = "Frontend public IP address."
+  value       = module.frontend_compute.public_ip
+}
+
+output "frontend_public_dns" {
+  description = "Frontend public DNS name."
+  value       = module.frontend_compute.public_dns
 }
 
 output "frontend_url" {
-  description = "HTTP URL for the To-Do application"
-  value       = "http://${module.compute.frontend_public_ip}"
+  description = "Frontend application URL."
+  value       = "http://${module.frontend_compute.public_ip}"
+}
+
+output "backend_instance_id" {
+  description = "Backend EC2 instance ID."
+  value       = module.backend_compute.instance_id
 }
 
 output "backend_private_ip" {
-  description = "Private IP of the FastAPI backend EC2 instance"
-  value       = module.compute.backend_private_ip
+  description = "Backend private IP address."
+  value       = module.backend_compute.private_ip
 }
 
-output "rds_endpoint" {
-  description = "RDS MySQL endpoint"
-  value       = module.database.db_endpoint
+output "database_endpoint" {
+  description = "RDS database endpoint."
+  value       = module.database.db_address
 }
 
-output "frontend_ecr_repository_url" {
-  description = "Frontend ECR repository URL"
+output "frontend_repository_url" {
+  description = "Frontend ECR repository URL."
   value       = module.ecr.frontend_repository_url
 }
 
-output "backend_ecr_repository_url" {
-  description = "Backend ECR repository URL"
+output "backend_repository_url" {
+  description = "Backend ECR repository URL."
   value       = module.ecr.backend_repository_url
-}
-
-output "ec2_ecr_pull_role_arn" {
-  description = "IAM role ARN used by EC2 instances to pull Docker images from ECR"
-  value       = module.compute.ec2_ecr_pull_role_arn
 }
