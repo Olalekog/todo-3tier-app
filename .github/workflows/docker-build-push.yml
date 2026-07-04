@@ -1,0 +1,292 @@
+name: Docker Build Test and Push
+
+on:
+  push:
+    branches:
+      - dev
+      - uat
+      - prod
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - "terraform/modules/ecr/**"
+      - "terraform/environments/**"
+      - ".github/workflows/docker-build-push.yml"
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to build images for"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - uat
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: todo-3tier-docker-build-${{ github.event.inputs.environment || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+  BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
+  TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION }}
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+jobs:
+  set-environment:
+    name: Resolve Build Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.resolve.outputs.environment }}
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
+      frontend_repo: ${{ steps.resolve.outputs.frontend_repo }}
+      backend_repo: ${{ steps.resolve.outputs.backend_repo }}
+    steps:
+      - name: Resolve environment and image names
+        id: resolve
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+          else
+            case "${{ github.ref_name }}" in
+              dev)
+                ENVIRONMENT="dev"
+                ;;
+              uat)
+                ENVIRONMENT="uat"
+                ;;
+              prod)
+                ENVIRONMENT="prod"
+                ;;
+              *)
+                echo "Unsupported branch: ${{ github.ref_name }}"
+                exit 1
+                ;;
+            esac
+          fi
+
+          IMAGE_TAG="${GITHUB_SHA}"
+          FRONTEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
+          BACKEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
+
+          echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "frontend_repo=${FRONTEND_REPO}" >> "$GITHUB_OUTPUT"
+          echo "backend_repo=${BACKEND_REPO}" >> "$GITHUB_OUTPUT"
+
+          echo "Environment: ${ENVIRONMENT}"
+          echo "Image tag: ${IMAGE_TAG}"
+          echo "Frontend repo: ${FRONTEND_REPO}"
+          echo "Backend repo: ${BACKEND_REPO}"
+
+  validate:
+    name: Validate Build Inputs
+    runs-on: ubuntu-latest
+    needs:
+      - set-environment
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required variables
+        shell: bash
+        run: |
+          REQUIRED_VARS=(
+            "AWS_REGION"
+            "PROJECT_NAME"
+            "BOOTSTRAP_ROLE_ARN"
+            "TERRAFORM_VERSION"
+            "TF_STATE_BUCKET"
+            "DB_PASSWORD"
+          )
+
+          for VAR_NAME in "${REQUIRED_VARS[@]}"; do
+            if [[ -z "${!VAR_NAME}" ]]; then
+              echo "Missing required GitHub variable or secret: ${VAR_NAME}"
+              exit 1
+            fi
+          done
+
+          if [[ ! -f "terraform/environments/${{ needs.set-environment.outputs.environment }}.tfvars" ]]; then
+            echo "Missing tfvars file: terraform/environments/${{ needs.set-environment.outputs.environment }}.tfvars"
+            exit 1
+          fi
+
+          echo "Required variables and tfvars file are present."
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Confirm AWS identity
+        run: aws sts get-caller-identity
+
+  create-ecr:
+    name: Create or Update ECR Repositories
+    runs-on: ubuntu-latest
+    needs:
+      - set-environment
+      - validate
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${PROJECT_NAME}/${{ needs.set-environment.outputs.environment }}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Apply ECR Only
+        working-directory: terraform
+        run: |
+          terraform apply -target=module.ecr -auto-approve \
+            -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
+            -var="db_password=${DB_PASSWORD}" \
+            -var="image_tag=${{ needs.set-environment.outputs.image_tag }}"
+
+  build-test-push:
+    name: Build Test and Push Images
+    runs-on: ubuntu-latest
+    needs:
+      - set-environment
+      - create-ecr
+    outputs:
+      image_tag: ${{ needs.set-environment.outputs.image_tag }}
+      frontend_image: ${{ steps.image.outputs.frontend_image }}
+      backend_image: ${{ steps.image.outputs.backend_image }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker Images
+        id: image
+        shell: bash
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          FRONTEND_IMAGE_SHA="${REGISTRY}/${{ needs.set-environment.outputs.frontend_repo }}:${{ needs.set-environment.outputs.image_tag }}"
+          BACKEND_IMAGE_SHA="${REGISTRY}/${{ needs.set-environment.outputs.backend_repo }}:${{ needs.set-environment.outputs.image_tag }}"
+          FRONTEND_IMAGE_LATEST="${REGISTRY}/${{ needs.set-environment.outputs.frontend_repo }}:latest"
+          BACKEND_IMAGE_LATEST="${REGISTRY}/${{ needs.set-environment.outputs.backend_repo }}:latest"
+
+          docker build -t "${FRONTEND_IMAGE_SHA}" -t "${FRONTEND_IMAGE_LATEST}" ./frontend
+          docker build -t "${BACKEND_IMAGE_SHA}" -t "${BACKEND_IMAGE_LATEST}" ./backend
+
+          echo "frontend_image=${FRONTEND_IMAGE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "backend_image=${BACKEND_IMAGE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "frontend_latest=${FRONTEND_IMAGE_LATEST}" >> "$GITHUB_OUTPUT"
+          echo "backend_latest=${BACKEND_IMAGE_LATEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Test Frontend Docker Image
+        shell: bash
+        run: |
+          docker run -d --name todo-frontend-test -p 8080:80 "${{ steps.image.outputs.frontend_image }}"
+          sleep 10
+          curl -f http://localhost:8080 || (docker logs todo-frontend-test && exit 1)
+          docker rm -f todo-frontend-test
+
+      - name: Start MySQL Test Database
+        shell: bash
+        run: |
+          docker network create todo-test-network
+
+          docker run -d --name todo-mysql-test \
+            --network todo-test-network \
+            -e MYSQL_DATABASE=todoapp \
+            -e MYSQL_USER=todo_admin \
+            -e MYSQL_PASSWORD=test-password \
+            -e MYSQL_ROOT_PASSWORD=root-password \
+            mysql:8.0
+
+          for i in {1..30}; do
+            if docker exec todo-mysql-test mysqladmin ping -h 127.0.0.1 -uroot -proot-password --silent; then
+              echo "MySQL test database is ready."
+              exit 0
+            fi
+            echo "Waiting for MySQL test database..."
+            sleep 5
+          done
+
+          docker logs todo-mysql-test
+          exit 1
+
+      - name: Test Backend Docker Image
+        shell: bash
+        run: |
+          docker run -d --name todo-backend-test \
+            --network todo-test-network \
+            -p 8000:8000 \
+            -e DB_HOST="todo-mysql-test" \
+            -e DB_PORT="3306" \
+            -e DB_NAME="todoapp" \
+            -e DB_USER="todo_admin" \
+            -e DB_PASSWORD="test-password" \
+            "${{ steps.image.outputs.backend_image }}"
+
+          sleep 15
+          curl -f http://localhost:8000/health || (docker logs todo-backend-test && exit 1)
+          curl -f http://localhost:8000/todos || true
+
+      - name: Push Docker Images to ECR
+        shell: bash
+        run: |
+          docker push "${{ steps.image.outputs.frontend_image }}"
+          docker push "${{ steps.image.outputs.backend_image }}"
+          docker push "${{ steps.image.outputs.frontend_latest }}"
+          docker push "${{ steps.image.outputs.backend_latest }}"
+
+      - name: Cleanup Test Containers
+        if: always()
+        shell: bash
+        run: |
+          docker rm -f todo-frontend-test todo-backend-test todo-mysql-test || true
+          docker network rm todo-test-network || true
+
+      - name: Build Summary
+        shell: bash
+        run: |
+          echo "### Docker images built, tested, and pushed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Environment: ${{ needs.set-environment.outputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image tag: ${{ needs.set-environment.outputs.image_tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Frontend image: ${{ steps.image.outputs.frontend_image }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Backend image: ${{ steps.image.outputs.backend_image }}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,4 +1,4 @@
-name: Build, Test, and Deploy Todo App
+name: Terraform Deploy Todo App
 
 on:
   push:
@@ -7,8 +7,6 @@ on:
       - uat
       - prod
     paths:
-      - "frontend/**"
-      - "backend/**"
       - "terraform/**"
       - ".github/workflows/deploy.yml"
 
@@ -23,8 +21,6 @@ on:
       - edited
       - ready_for_review
     paths:
-      - "frontend/**"
-      - "backend/**"
       - "terraform/**"
       - ".github/workflows/deploy.yml"
 
@@ -48,6 +44,11 @@ on:
           - plan
           - apply
           - destroy
+      image_tag:
+        description: "Docker image tag to deploy. Use a Git SHA from the Docker workflow, or latest."
+        required: true
+        default: "latest"
+        type: string
 
 permissions:
   id-token: write
@@ -55,7 +56,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: todo-3tier-${{ github.event_name }}-${{ github.ref_name }}-${{ github.event.inputs.environment || github.base_ref || github.ref_name }}
+  group: todo-3tier-deploy-${{ github.event_name }}-${{ github.ref_name }}-${{ github.event.inputs.environment || github.base_ref || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -64,7 +65,6 @@ env:
   BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
   TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION }}
   TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-  IMAGE_TAG: latest
   DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
 jobs:
@@ -89,7 +89,7 @@ jobs:
 
           if [[ "${TARGET_BRANCH}" == "prod" && "${SOURCE_BRANCH}" == "uat" ]]; then
             echo "Valid promotion path: uat -> prod"
-            echo "Production deployment will require GitHub Environment approval on prod after merge."
+            echo "Production deployment requires GitHub Environment approval on prod after merge."
             exit 0
           fi
 
@@ -100,23 +100,26 @@ jobs:
           exit 1
 
   set-environment:
-    name: Resolve Environment
+    name: Resolve Deployment Environment
     runs-on: ubuntu-latest
     outputs:
       environment: ${{ steps.resolve.outputs.environment }}
       tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
       terraform_action: ${{ steps.resolve.outputs.terraform_action }}
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
     steps:
-      - name: Resolve deployment environment
+      - name: Resolve environment, action, and image tag
         id: resolve
         shell: bash
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             ENVIRONMENT="${{ github.event.inputs.environment }}"
             TERRAFORM_ACTION="${{ github.event.inputs.terraform_action }}"
+            IMAGE_TAG="${{ github.event.inputs.image_tag }}"
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             ENVIRONMENT="${{ github.base_ref }}"
             TERRAFORM_ACTION="plan"
+            IMAGE_TAG="latest"
           else
             case "${{ github.ref_name }}" in
               dev)
@@ -134,6 +137,7 @@ jobs:
                 ;;
             esac
             TERRAFORM_ACTION="apply"
+            IMAGE_TAG="latest"
           fi
 
           TFVARS_FILE="terraform/environments/${ENVIRONMENT}.tfvars"
@@ -141,13 +145,15 @@ jobs:
           echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
           echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
           echo "terraform_action=${TERRAFORM_ACTION}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
           echo "Environment: ${ENVIRONMENT}"
           echo "TFVars file: ${TFVARS_FILE}"
           echo "Terraform action: ${TERRAFORM_ACTION}"
+          echo "Image tag: ${IMAGE_TAG}"
 
-  validate:
-    name: Validate Terraform
+  terraform-validate-plan:
+    name: Terraform Validate and Plan
     runs-on: ubuntu-latest
     needs:
       - validate-promotion-path
@@ -158,7 +164,6 @@ jobs:
         github.event_name != 'pull_request' ||
         needs.validate-promotion-path.result == 'success'
       )
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -227,186 +232,24 @@ jobs:
           terraform plan \
             -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
             -var="db_password=${DB_PASSWORD}" \
-            -var="image_tag=${IMAGE_TAG}" \
+            -var="image_tag=${{ needs.set-environment.outputs.image_tag }}" \
             -out=tfplan
 
-  build:
-    name: Build Docker Images
+  terraform-deploy:
+    name: Terraform Deploy
     runs-on: ubuntu-latest
     needs:
       - set-environment
-      - validate
-    if: github.event_name != 'pull_request' && needs.set-environment.outputs.terraform_action != 'destroy'
-
-    outputs:
-      frontend_image: ${{ steps.image.outputs.frontend_image }}
-      backend_image: ${{ steps.image.outputs.backend_image }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials using GitHub OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - name: Terraform Init
-        working-directory: terraform
-        run: |
-          terraform init \
-            -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="key=${PROJECT_NAME}/${{ needs.set-environment.outputs.environment }}/terraform.tfstate" \
-            -backend-config="region=${AWS_REGION}" \
-            -backend-config="encrypt=true"
-
-      - name: Create or Update ECR Repositories
-        working-directory: terraform
-        run: |
-          terraform apply -target=module.ecr -auto-approve \
-            -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
-            -var="db_password=${DB_PASSWORD}" \
-            -var="image_tag=${IMAGE_TAG}"
-
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and Push Docker Images
-        id: image
-        shell: bash
-        run: |
-          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-
-          FRONTEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
-          BACKEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
-
-          FRONTEND_IMAGE_LATEST="${REGISTRY}/${FRONTEND_REPO}:latest"
-          BACKEND_IMAGE_LATEST="${REGISTRY}/${BACKEND_REPO}:latest"
-          FRONTEND_IMAGE_SHA="${REGISTRY}/${FRONTEND_REPO}:${GITHUB_SHA}"
-          BACKEND_IMAGE_SHA="${REGISTRY}/${BACKEND_REPO}:${GITHUB_SHA}"
-
-          docker build -t "${FRONTEND_IMAGE_LATEST}" -t "${FRONTEND_IMAGE_SHA}" ./frontend
-          docker build -t "${BACKEND_IMAGE_LATEST}" -t "${BACKEND_IMAGE_SHA}" ./backend
-
-          docker push "${FRONTEND_IMAGE_LATEST}"
-          docker push "${FRONTEND_IMAGE_SHA}"
-          docker push "${BACKEND_IMAGE_LATEST}"
-          docker push "${BACKEND_IMAGE_SHA}"
-
-          echo "frontend_image=${FRONTEND_IMAGE_SHA}" >> "$GITHUB_OUTPUT"
-          echo "backend_image=${BACKEND_IMAGE_SHA}" >> "$GITHUB_OUTPUT"
-
-  test:
-    name: Test Docker Images
-    runs-on: ubuntu-latest
-    needs:
-      - set-environment
-      - build
-    if: github.event_name != 'pull_request' && needs.set-environment.outputs.terraform_action != 'destroy'
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials using GitHub OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActions
-
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Pull Docker Images From ECR
-        shell: bash
-        run: |
-          docker pull "${{ needs.build.outputs.frontend_image }}"
-          docker pull "${{ needs.build.outputs.backend_image }}"
-
-      - name: Test Frontend Docker Image
-        shell: bash
-        run: |
-          docker run -d --name todo-frontend-test -p 8080:80 "${{ needs.build.outputs.frontend_image }}"
-          sleep 10
-          curl -f http://localhost:8080 || (docker logs todo-frontend-test && exit 1)
-          docker rm -f todo-frontend-test
-
-      - name: Start MySQL Test Database
-        shell: bash
-        run: |
-          docker network create todo-test-network
-
-          docker run -d --name todo-mysql-test \
-            --network todo-test-network \
-            -e MYSQL_DATABASE=todoapp \
-            -e MYSQL_USER=todo_admin \
-            -e MYSQL_PASSWORD=test-password \
-            -e MYSQL_ROOT_PASSWORD=root-password \
-            mysql:8.0
-
-          for i in {1..30}; do
-            if docker exec todo-mysql-test mysqladmin ping -h 127.0.0.1 -uroot -proot-password --silent; then
-              echo "MySQL test database is ready."
-              exit 0
-            fi
-            echo "Waiting for MySQL test database..."
-            sleep 5
-          done
-
-          docker logs todo-mysql-test
-          exit 1
-
-      - name: Test Backend Docker Image
-        shell: bash
-        run: |
-          docker run -d --name todo-backend-test \
-            --network todo-test-network \
-            -p 8000:8000 \
-            -e DB_HOST="todo-mysql-test" \
-            -e DB_PORT="3306" \
-            -e DB_NAME="todoapp" \
-            -e DB_USER="todo_admin" \
-            -e DB_PASSWORD="test-password" \
-            "${{ needs.build.outputs.backend_image }}"
-
-          sleep 15
-          curl -f http://localhost:8000/health || (docker logs todo-backend-test && exit 1)
-          curl -f http://localhost:8000/todos || true
-
-      - name: Cleanup Test Containers
-        if: always()
-        shell: bash
-        run: |
-          docker rm -f todo-frontend-test todo-backend-test todo-mysql-test || true
-          docker network rm todo-test-network || true
-
-  deploy:
-    name: Deploy Infrastructure
-    runs-on: ubuntu-latest
-    needs:
-      - set-environment
-      - validate
-      - build
-      - test
+      - terraform-validate-plan
     if: |
       always() &&
       github.event_name != 'pull_request' &&
+      needs.terraform-validate-plan.result == 'success' &&
       (
-        needs.set-environment.outputs.terraform_action == 'destroy' ||
-        (needs.build.result == 'success' && needs.test.result == 'success')
+        needs.set-environment.outputs.terraform_action == 'apply' ||
+        needs.set-environment.outputs.terraform_action == 'destroy'
       )
     environment: ${{ needs.set-environment.outputs.environment }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -431,16 +274,6 @@ jobs:
             -backend-config="key=${PROJECT_NAME}/${{ needs.set-environment.outputs.environment }}/terraform.tfstate" \
             -backend-config="region=${AWS_REGION}" \
             -backend-config="encrypt=true"
-
-      - name: Terraform Plan
-        if: needs.set-environment.outputs.terraform_action == 'plan'
-        working-directory: terraform
-        run: |
-          terraform plan \
-            -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
-            -var="db_password=${DB_PASSWORD}" \
-            -var="image_tag=${IMAGE_TAG}" \
-            -out=tfplan
 
       - name: Terraform Apply Full Stack
         if: needs.set-environment.outputs.terraform_action == 'apply'
@@ -449,7 +282,7 @@ jobs:
           terraform apply -auto-approve \
             -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
             -var="db_password=${DB_PASSWORD}" \
-            -var="image_tag=${IMAGE_TAG}"
+            -var="image_tag=${{ needs.set-environment.outputs.image_tag }}"
 
       - name: Terraform Destroy
         if: needs.set-environment.outputs.terraform_action == 'destroy'
@@ -458,7 +291,7 @@ jobs:
           terraform destroy -auto-approve \
             -var-file="environments/${{ needs.set-environment.outputs.environment }}.tfvars" \
             -var="db_password=${DB_PASSWORD}" \
-            -var="image_tag=${IMAGE_TAG}"
+            -var="image_tag=${{ needs.set-environment.outputs.image_tag }}"
 
       - name: Terraform Outputs
         if: needs.set-environment.outputs.terraform_action == 'apply'
