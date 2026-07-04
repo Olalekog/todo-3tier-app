@@ -188,21 +188,46 @@ jobs:
       - name: Test backend container
         shell: bash
         run: |
+          set -euo pipefail
+
+          cleanup() {
+            docker rm -f todo-backend-test todo-mysql-test >/dev/null 2>&1 || true
+            docker network rm todo-test >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          cleanup
           docker network create todo-test
+
           docker run -d --name todo-mysql-test --network todo-test \
             -e MYSQL_ROOT_PASSWORD=testpass \
             -e MYSQL_DATABASE=todoapp \
             -e MYSQL_USER=todo_admin \
             -e MYSQL_PASSWORD=testpass \
+            --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -ptestpass --silent" \
+            --health-interval=5s \
+            --health-timeout=5s \
+            --health-retries=30 \
             mysql:8
 
-          echo "Waiting for MySQL..."
-          for i in {1..30}; do
-            if docker exec todo-mysql-test mysqladmin ping -h localhost -uroot -ptestpass --silent; then
+          echo "Waiting for MySQL to become ready..."
+          MYSQL_READY=false
+          for i in {1..60}; do
+            if docker exec todo-mysql-test mysqladmin ping -h 127.0.0.1 -uroot -ptestpass --silent >/dev/null 2>&1 && \
+               docker exec todo-mysql-test mysql -h 127.0.0.1 -utodo_admin -ptestpass -D todoapp -e "SELECT 1;" >/dev/null 2>&1; then
+              MYSQL_READY=true
+              echo "MySQL is ready."
               break
             fi
+            echo "MySQL not ready yet. Attempt ${i}/60"
             sleep 3
           done
+
+          if [[ "${MYSQL_READY}" != "true" ]]; then
+            echo "MySQL did not become ready in time."
+            docker logs todo-mysql-test
+            exit 1
+          fi
 
           docker run -d --name todo-backend-test --network todo-test -p 8000:8000 \
             -e DB_HOST=todo-mysql-test \
@@ -212,10 +237,30 @@ jobs:
             -e DB_PASSWORD=testpass \
             "${{ needs.resolve.outputs.backend_image }}"
 
-          sleep 15
-          curl -f http://localhost:8000/health || (docker logs todo-backend-test && exit 1)
-          docker rm -f todo-backend-test todo-mysql-test
-          docker network rm todo-test
+          echo "Waiting for backend health endpoint..."
+          BACKEND_READY=false
+          for i in {1..40}; do
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+              BACKEND_READY=true
+              echo "Backend is healthy."
+              break
+            fi
+
+            if ! docker ps --format '{{.Names}}' | grep -q '^todo-backend-test$'; then
+              echo "Backend container exited early."
+              docker logs todo-backend-test
+              exit 1
+            fi
+
+            echo "Backend not ready yet. Attempt ${i}/40"
+            sleep 3
+          done
+
+          if [[ "${BACKEND_READY}" != "true" ]]; then
+            echo "Backend did not become healthy in time."
+            docker logs todo-backend-test
+            exit 1
+          fi
 
   push:
     name: Push Docker Images to ECR
