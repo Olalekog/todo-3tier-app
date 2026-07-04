@@ -1,4 +1,4 @@
-# GitHub Actions Setup Scripts
+# GitHub Actions OIDC Setup
 
 This directory contains scripts to automate AWS IAM configuration for GitHub Actions.
 
@@ -22,7 +22,7 @@ bash scripts/setup-github-oidc.sh
 1. **Creates GitHub OIDC Provider** - Registers GitHub's OIDC provider in AWS IAM (if not already present)
 2. **Creates IAM Role** - Creates `todo-3tier-github-oidc-role` with proper trust relationships
 3. **Attaches Permissions** - Applies the Terraform deployment policy from `docs/github-actions-iam-policy.json`
-4. **Displays Configuration** - Outputs the role ARN, account ID, and environment variables to configure in GitHub
+4. **Displays Configuration** - Outputs the role ARN and environment variables to configure in GitHub
 
 ## Prerequisites
 
@@ -35,7 +35,6 @@ bash scripts/setup-github-oidc.sh
 After the script completes, you need to configure GitHub:
 
 1. **Add Repository Variables** (Settings → Secrets and variables → Variables):
-   - `AWS_ACCOUNT_ID`: (displayed by script)
    - `AWS_REGION`: (displayed by script)
    - `PROJECT_NAME`: `todo-3tier-simple`
    - `BOOTSTRAP_ROLE_ARN`: (displayed by script)

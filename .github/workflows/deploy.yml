@@ -56,7 +56,7 @@ permissions:
   pull-requests: read
 
 env:
-  APP_DIR: todo-3tier-app
+  APP_DIR: .
   AWS_REGION: ${{ vars.AWS_REGION }}
   AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
   PROJECT_NAME: ${{ vars.PROJECT_NAME }}
