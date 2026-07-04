@@ -7,7 +7,6 @@ crash.log
 crash.*.log
 *.tfvars
 !terraform.tfvars.example
-!terraform/environments/*.tfvars
 
 # Local environment files
 .env

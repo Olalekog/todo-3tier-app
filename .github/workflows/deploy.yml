@@ -67,8 +67,6 @@ env:
   TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
   DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
   APP_DIR: .
-  # Temporary: Allow Node 20 while awaiting ecosystem compatibility with Node 24
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
   validate-promotion-path:

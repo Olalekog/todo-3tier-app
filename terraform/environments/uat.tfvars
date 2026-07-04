@@ -1,28 +1,30 @@
-environment = "uat"
+# UAT environment Terraform variables
+aws_region   = "us-east-1"
+project_name = "todo-3tier-simple"
+environment  = "uat"
 
-vpc_cidr = "10.30.0.0/16"
+vpc_cidr                 = "10.50.0.0/16"
+az_count                 = 2
+public_subnet_cidrs      = ['10.50.1.0/24', '10.50.2.0/24']
+private_app_subnet_cidrs = ['10.50.11.0/24', '10.50.12.0/24']
+private_db_subnet_cidrs  = ['10.50.21.0/24', '10.50.22.0/24']
 
-public_subnet_cidrs = [
-  "10.30.1.0/24",
-  "10.30.2.0/24"
-]
+allowed_http_cidr = "0.0.0.0/0"
+allowed_ssh_cidr  = "YOUR_PUBLIC_IP/32"
+key_name          = null
 
-private_app_subnet_cidrs = [
-  "10.30.11.0/24",
-  "10.30.12.0/24"
-]
+instance_type        = "t3.micro"
+image_tag            = "latest"
+db_name              = "tododb"
+db_username          = "todo_admin"
+db_instance_class    = "db.t3.micro"
+db_allocated_storage = 20
 
-private_db_subnet_cidrs = [
-  "10.30.21.0/24",
-  "10.30.22.0/24"
-]
+# Do not store db_password in this file.
+# GitHub Actions passes db_password from the DB_PASSWORD secret.
 
-frontend_instance_type = "t3.micro"
-backend_instance_type  = "t3.micro"
-
-db_instance_class      = "db.t3.micro"
-db_allocated_storage   = 20
-db_name                = "todoapp"
-db_username            = "todo_admin"
-db_skip_final_snapshot = true
-db_deletion_protection = false
+tags = {
+  Project     = "todo-3tier-simple"
+  Environment = "uat"
+  ManagedBy   = "Terraform"
+}
