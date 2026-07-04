@@ -324,6 +324,7 @@ jobs:
         run: |
           echo "Triggering deploy.yml for dev with image tag: ${IMAGE_TAG}"
           gh workflow run deploy.yml \
+            --repo "${GITHUB_REPOSITORY}" \
             --ref dev \
             -f environment=dev \
             -f action=apply \
