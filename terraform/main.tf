@@ -36,7 +36,7 @@ module "network" {
   project_name             = var.project_name
   environment              = var.environment
   vpc_cidr                 = var.vpc_cidr
-  azs                      = local.azs
+  availability_zones       = local.azs
   public_subnet_cidrs      = var.public_subnet_cidrs
   private_app_subnet_cidrs = var.private_app_subnet_cidrs
   private_db_subnet_cidrs  = var.private_db_subnet_cidrs
@@ -66,16 +66,16 @@ module "ecr" {
 module "database" {
   source = "./modules/database"
 
-  project_name               = var.project_name
-  environment                = var.environment
-  private_db_subnet_ids      = module.network.private_db_subnet_ids
-  database_security_group_id = module.security_groups.database_security_group_id
-  db_name                    = var.db_name
-  db_username                = var.db_username
-  db_password                = var.db_password
-  db_instance_class          = var.db_instance_class
-  db_allocated_storage       = var.db_allocated_storage
-  tags                       = local.common_tags
+  project_name          = var.project_name
+  environment           = var.environment
+  private_db_subnet_ids = module.network.private_db_subnet_ids
+  db_security_group_id  = module.security_groups.database_security_group_id
+  db_name               = var.db_name
+  db_username           = var.db_username
+  db_password           = var.db_password
+  db_instance_class     = var.db_instance_class
+  allocated_storage     = var.db_allocated_storage
+  tags                  = local.common_tags
 }
 
 # Backend EC2 workload: uses the same reusable compute module as frontend,
