@@ -21,7 +21,7 @@ on:
         description: Allow intentional destroy or replacement actions
         required: false
         type: string
-        default: "false"
+        default: "true"
 
   workflow_dispatch:
     inputs:
@@ -42,7 +42,7 @@ on:
           - plan
           - apply
           - destroy
-        default: plan
+        default: destroy
       image_tag:
         description: Docker image tag to deploy
         required: false
@@ -54,7 +54,7 @@ on:
         options:
           - "false"
           - "true"
-        default: "false"
+        default: "true"
 
   pull_request:
     branches:
@@ -118,13 +118,13 @@ jobs:
           INPUT_ENVIRONMENT="${{ inputs.environment || '' }}"
           INPUT_ACTION="${{ inputs.action || '' }}"
           INPUT_IMAGE_TAG="${{ inputs.image_tag || '' }}"
-          INPUT_ALLOW_REPLACEMENT="${{ inputs.allow_replacement || 'false' }}"
+          INPUT_ALLOW_REPLACEMENT="${{ inputs.allow_replacement || 'true' }}"
 
           if [[ -n "${INPUT_ENVIRONMENT}" ]]; then
             ENVIRONMENT="${INPUT_ENVIRONMENT}"
             ACTION="${INPUT_ACTION:-apply}"
             IMAGE_TAG="${INPUT_IMAGE_TAG:-latest}"
-            ALLOW_REPLACEMENT="${INPUT_ALLOW_REPLACEMENT:-false}"
+            ALLOW_REPLACEMENT="${INPUT_ALLOW_REPLACEMENT:-true}"
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             ENVIRONMENT="${{ github.event.inputs.environment }}"
             ACTION="${{ github.event.inputs.action }}"
@@ -147,7 +147,7 @@ jobs:
             ENVIRONMENT="${TARGET_BRANCH}"
             ACTION="plan"
             IMAGE_TAG="latest"
-            ALLOW_REPLACEMENT="false"
+            ALLOW_REPLACEMENT="true"
           elif [[ "${{ github.event_name }}" == "push" ]]; then
             BRANCH="${GITHUB_REF_NAME}"
             case "${BRANCH}" in
@@ -155,7 +155,7 @@ jobs:
                 ENVIRONMENT="${BRANCH}"
                 ACTION="apply"
                 IMAGE_TAG="latest"
-                ALLOW_REPLACEMENT="false"
+                ALLOW_REPLACEMENT="true"
                 ;;
               *)
                 echo "Unsupported branch: ${BRANCH}"
