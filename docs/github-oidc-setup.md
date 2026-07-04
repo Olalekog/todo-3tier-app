@@ -105,6 +105,7 @@ Add these as **Repository Variables** (not secrets) in GitHub:
 
 1. Go to **Settings** → **Secrets and variables** → **Variables**
 2. Add:
+   - `AWS_ACCOUNT_ID`: `<your-aws-account-id>` (12-digit number)
    - `AWS_REGION`: `us-east-1`
    - `PROJECT_NAME`: `todo-3tier-simple`
    - `TF_STATE_BUCKET`: `<your-terraform-state-bucket>`
