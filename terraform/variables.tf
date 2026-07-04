@@ -144,3 +144,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "backend_allowed_cidr_blocks" {
+  description = "CIDR blocks allowed to reach the backend."
+  type        = list(string)
+  default     = []
+}

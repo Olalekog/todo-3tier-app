@@ -19,11 +19,11 @@ output "public_dns" {
 }
 
 output "iam_role_name" {
-  description = "IAM role name attached to the EC2 instance profile."
+  description = "IAM role name attached to the EC2 instance."
   value       = aws_iam_role.ec2_ecr_pull.name
 }
 
 output "instance_profile_name" {
-  description = "IAM instance profile name."
+  description = "IAM instance profile name attached to the EC2 instance."
   value       = aws_iam_instance_profile.this.name
 }

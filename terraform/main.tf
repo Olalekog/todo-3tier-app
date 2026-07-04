@@ -51,7 +51,7 @@ module "security_groups" {
   vpc_id                      = module.network.vpc_id
   allowed_http_cidr           = var.allowed_http_cidr
   allowed_ssh_cidr            = var.allowed_ssh_cidr
-  backend_allowed_cidr_blocks = var.private_app_subnet_cidrs
+  backend_allowed_cidr_blocks = length(var.backend_allowed_cidr_blocks) > 0 ? var.backend_allowed_cidr_blocks : var.private_app_subnet_cidrs
   tags                        = local.common_tags
 }
 
@@ -123,5 +123,6 @@ module "frontend_compute" {
   db_name                     = ""
   db_username                 = ""
   db_password                 = ""
+  backend_private_ip          = module.backend_compute.private_ip
   tags                        = local.common_tags
 }

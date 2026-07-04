@@ -60,6 +60,12 @@ variable "user_data_template_path" {
   type        = string
 }
 
+variable "backend_private_ip" {
+  description = "Backend private IP used by the frontend reverse proxy. Blank for backend workload."
+  type        = string
+  default     = ""
+}
+
 variable "db_host" {
   description = "Database hostname. Required for backend; blank for frontend."
   type        = string

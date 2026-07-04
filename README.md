@@ -967,3 +967,21 @@ Docker build contexts are:
 frontend
 backend
 ```
+
+## Separate Frontend and Backend Instance Types
+
+The frontend and backend EC2 workloads can now use different instance sizes. Configure them per environment in `terraform/environments/<env>.tfvars`:
+
+```hcl
+frontend_instance_type = "t3.micro"
+backend_instance_type  = "t3.small"
+```
+
+Terraform passes these into the compute module separately:
+
+```hcl
+frontend_instance_type = var.frontend_instance_type
+backend_instance_type  = var.backend_instance_type
+```
+
+This lets you scale the FastAPI backend independently from the React frontend without changing both instances at the same time.

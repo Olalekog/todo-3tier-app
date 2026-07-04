@@ -93,3 +93,15 @@ uat -> prod
 Production deployment is protected by the GitHub Environment named `prod`. Configure required reviewers on that environment to create the approval gate before production Terraform apply runs.
 
 ![Promotion Flow](../assets/promotion-flow.svg)
+
+
+## Separate workload sizing
+
+The compute layer supports separate EC2 instance types for the frontend and backend workloads:
+
+```hcl
+frontend_instance_type = "t3.micro"
+backend_instance_type  = "t3.small"
+```
+
+Use this when the backend API needs more CPU or memory than the frontend web container.
