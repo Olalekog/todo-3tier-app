@@ -39,7 +39,7 @@ resource "aws_iam_instance_profile" "ec2_ecr_pull" {
 
 resource "aws_instance" "backend" {
   ami                         = var.ami_id
-  instance_type               = var.instance_type
+  instance_type               = var.backend_instance_type
   subnet_id                   = var.backend_subnet_id
   vpc_security_group_ids      = [var.backend_security_group_id]
   associate_public_ip_address = false
@@ -65,7 +65,7 @@ resource "aws_instance" "backend" {
 
 resource "aws_instance" "frontend" {
   ami                         = var.ami_id
-  instance_type               = var.instance_type
+  instance_type               = var.frontend_instance_type
   subnet_id                   = var.frontend_subnet_id
   vpc_security_group_ids      = [var.frontend_security_group_id]
   associate_public_ip_address = true

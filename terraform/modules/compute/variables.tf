@@ -14,8 +14,14 @@ variable "ami_id" {
   type = string
 }
 
-variable "instance_type" {
-  type = string
+variable "frontend_instance_type" {
+  description = "EC2 instance type for the frontend workload"
+  type        = string
+}
+
+variable "backend_instance_type" {
+  description = "EC2 instance type for the backend workload"
+  type        = string
 }
 
 variable "key_name" {

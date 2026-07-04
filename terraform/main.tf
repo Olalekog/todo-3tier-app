@@ -84,7 +84,8 @@ module "compute" {
   environment                = var.environment
   aws_region                 = var.aws_region
   ami_id                     = data.aws_ami.ubuntu.id
-  instance_type              = var.instance_type
+  frontend_instance_type     = var.frontend_instance_type
+  backend_instance_type      = var.backend_instance_type
   key_name                   = var.key_name == "" ? null : var.key_name
   frontend_subnet_id         = module.network.public_subnet_ids[0]
   backend_subnet_id          = module.network.private_app_subnet_ids[0]

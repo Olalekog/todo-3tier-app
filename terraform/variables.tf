@@ -64,8 +64,14 @@ variable "key_name" {
   default     = null
 }
 
-variable "instance_type" {
-  description = "EC2 instance type for frontend and backend"
+variable "frontend_instance_type" {
+  description = "EC2 instance type for the frontend workload"
+  type        = string
+  default     = "t3.micro"
+}
+
+variable "backend_instance_type" {
+  description = "EC2 instance type for the backend workload"
   type        = string
   default     = "t3.micro"
 }
