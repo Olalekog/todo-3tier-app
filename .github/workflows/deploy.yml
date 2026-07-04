@@ -44,6 +44,16 @@ on:
         required: false
         default: latest
 
+  push:
+    branches:
+      - dev
+      - uat
+      - prod
+    paths:
+      # Infrastructure changes should run the deploy build/test/deploy stages.
+      - "terraform/**"
+      - ".github/workflows/deploy.yml"
+
   pull_request:
     branches:
       - uat
@@ -115,6 +125,15 @@ jobs:
 
             ENVIRONMENT="${BASE_BRANCH}"
             ACTION="plan"
+            IMAGE_TAG="latest"
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            case "${GITHUB_REF_NAME}" in
+              dev) ENVIRONMENT="dev"; ACTION="apply" ;;
+              uat) ENVIRONMENT="uat"; ACTION="plan" ;;
+              prod) ENVIRONMENT="prod"; ACTION="plan" ;;
+              *) echo "Unsupported branch for infrastructure deploy: ${GITHUB_REF_NAME}"; exit 1 ;;
+            esac
+            # Infrastructure-only changes reuse the latest currently published Docker image.
             IMAGE_TAG="latest"
           else
             echo "Unsupported event without reusable or manual inputs: ${{ github.event_name }}"

@@ -7,10 +7,11 @@ on:
       - uat
       - prod
     paths:
+      # Container/application changes should build a new image.
       - "frontend/**"
       - "backend/**"
+      # Workflow changes should validate the Docker workflow.
       - ".github/workflows/docker-build-push.yml"
-      - ".github/workflows/deploy.yml"
   workflow_dispatch:
     inputs:
       environment:
@@ -113,12 +114,12 @@ jobs:
           echo "backend_image_latest=${ECR_REGISTRY}/${BACKEND_REPO}:latest" >> "${GITHUB_OUTPUT}"
 
 
-  dockerfile-changes:
-    name: Check Dockerfile Changes
+  container-changes:
+    name: Check Container/App Changes
     needs: resolve
     runs-on: ubuntu-latest
     outputs:
-      dockerfile_changed: ${{ steps.changes.outputs.dockerfile_changed }}
+      container_changed: ${{ steps.changes.outputs.container_changed }}
       changed_files: ${{ steps.changes.outputs.changed_files }}
     steps:
       - name: Checkout repository
@@ -126,7 +127,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check whether Dockerfiles changed
+      - name: Check whether container or app files changed
         id: changes
         shell: bash
         run: |
@@ -135,7 +136,7 @@ jobs:
           # Manual workflow runs are intentional builds.
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "Manual workflow run detected. Docker build is enabled."
-            echo "dockerfile_changed=true" >> "${GITHUB_OUTPUT}"
+            echo "container_changed=true" >> "${GITHUB_OUTPUT}"
             echo "changed_files=workflow_dispatch" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
@@ -152,12 +153,14 @@ jobs:
           echo "Changed files:"
           echo "${CHANGED_FILES}"
 
-          if echo "${CHANGED_FILES}" | grep -E '^(frontend/Dockerfile|backend/Dockerfile)$' >/dev/null 2>&1; then
-            echo "Dockerfile change detected. Docker build/test/push will run."
-            echo "dockerfile_changed=true" >> "${GITHUB_OUTPUT}"
+          # Build a new image when anything that can affect the container image changes.
+          # This includes Dockerfiles and source/config files under frontend/ or backend/.
+          if echo "${CHANGED_FILES}" | grep -E '^(frontend/|backend/)' >/dev/null 2>&1; then
+            echo "Container/app change detected. Docker build/test/push will run."
+            echo "container_changed=true" >> "${GITHUB_OUTPUT}"
           else
-            echo "No Dockerfile change detected. Docker build/test/push will be skipped."
-            echo "dockerfile_changed=false" >> "${GITHUB_OUTPUT}"
+            echo "No container/app change detected. Docker build/test/push will be skipped."
+            echo "container_changed=false" >> "${GITHUB_OUTPUT}"
           fi
 
           # Keep output single-line safe.
@@ -167,8 +170,8 @@ jobs:
     name: Build Docker Images
     needs:
       - resolve
-      - dockerfile-changes
-    if: needs.dockerfile-changes.outputs.dockerfile_changed == 'true'
+      - container-changes
+    if: needs.container-changes.outputs.container_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -216,9 +219,9 @@ jobs:
     name: Test Docker Images
     needs:
       - resolve
-      - dockerfile-changes
+      - container-changes
       - build
-    if: needs.dockerfile-changes.outputs.dockerfile_changed == 'true'
+    if: needs.container-changes.outputs.container_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download Docker image artifacts
@@ -322,9 +325,9 @@ jobs:
     name: Push Docker Images to ECR
     needs:
       - resolve
-      - dockerfile-changes
+      - container-changes
       - test
-    if: needs.dockerfile-changes.outputs.dockerfile_changed == 'true'
+    if: needs.container-changes.outputs.container_changed == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -374,27 +377,27 @@ jobs:
 
 
   skip-no-dockerfile-change:
-    name: Skip Build - No Dockerfile Change
+    name: Skip Build - No Container/App Change
     needs:
       - resolve
-      - dockerfile-changes
-    if: needs.dockerfile-changes.outputs.dockerfile_changed != 'true'
+      - container-changes
+    if: needs.container-changes.outputs.container_changed != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Explain skip
         shell: bash
         run: |
-          echo "No frontend/Dockerfile or backend/Dockerfile change was detected."
-          echo "Skipping Docker build, test, push, and automatic dev deploy."
-          echo "Changed files: ${{ needs.dockerfile-changes.outputs.changed_files }}"
+          echo "No frontend/ or backend/ change was detected."
+          echo "Skipping Docker image build, test, push, and automatic dev image deploy."
+          echo "Changed files: ${{ needs.container-changes.outputs.changed_files }}"
 
   deploy-dev:
     name: Deploy Dev With New Image
     needs:
       - resolve
-      - dockerfile-changes
+      - container-changes
       - push
-    if: needs.resolve.outputs.environment == 'dev' && needs.dockerfile-changes.outputs.dockerfile_changed == 'true'
+    if: needs.resolve.outputs.environment == 'dev' && needs.container-changes.outputs.container_changed == 'true'
     uses: ./.github/workflows/deploy.yml
     with:
       environment: dev
