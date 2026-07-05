@@ -11,7 +11,7 @@ on:
           - dev
           - uat
           - prod
-        default: uat
+        default: dev
 
       confirm_destroy:
         description: Type DESTROY to confirm
@@ -36,6 +36,8 @@ on:
   push:
     branches:
       - dev
+      - uat
+      - prod
       - main
     paths:
       - ".github/workflows/destroy.yml"
