@@ -49,6 +49,8 @@ jobs:
       image_tag: ${{ steps.resolve.outputs.image_tag }}
       frontend_image_tag: ${{ steps.resolve.outputs.frontend_image_tag }}
       backend_image_tag: ${{ steps.resolve.outputs.backend_image_tag }}
+      aws_account_id: ${{ steps.resolve.outputs.aws_account_id }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -61,15 +63,41 @@ jobs:
         run: |
           set -euo pipefail
 
+          RESOLVED_AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
+          if [[ -z "${RESOLVED_AWS_ACCOUNT_ID}" ]]; then
+            RESOLVED_AWS_ACCOUNT_ID="$(echo "${BOOTSTRAP_ROLE_ARN}" | awk -F: '{print $5}')"
+          fi
+
+          REQUIRED_VARS=(
+            "AWS_REGION"
+            "PROJECT_NAME"
+            "BOOTSTRAP_ROLE_ARN"
+            "RESOLVED_AWS_ACCOUNT_ID"
+          )
+
+          for VAR_NAME in "${REQUIRED_VARS[@]}"; do
+            if [[ -z "${!VAR_NAME}" ]]; then
+              echo "Missing required value: ${VAR_NAME}"
+              exit 1
+            fi
+          done
+
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             ENVIRONMENT="${{ github.event.inputs.environment }}"
             REQUESTED_WORKLOAD="${{ github.event.inputs.workload }}"
+
             if [[ "${REQUESTED_WORKLOAD}" == "frontend" ]]; then
-              BUILD_FRONTEND="true"; BUILD_BACKEND="false"; WORKLOAD="frontend"
+              BUILD_FRONTEND="true"
+              BUILD_BACKEND="false"
+              WORKLOAD="frontend"
             elif [[ "${REQUESTED_WORKLOAD}" == "backend" ]]; then
-              BUILD_FRONTEND="false"; BUILD_BACKEND="true"; WORKLOAD="backend"
+              BUILD_FRONTEND="false"
+              BUILD_BACKEND="true"
+              WORKLOAD="backend"
             else
-              BUILD_FRONTEND="true"; BUILD_BACKEND="true"; WORKLOAD="app"
+              BUILD_FRONTEND="true"
+              BUILD_BACKEND="true"
+              WORKLOAD="app"
             fi
           else
             case "${GITHUB_REF_NAME}" in
@@ -79,6 +107,7 @@ jobs:
 
             BEFORE="${{ github.event.before }}"
             AFTER="${{ github.sha }}"
+
             if [[ -z "${BEFORE}" || "${BEFORE}" == "0000000000000000000000000000000000000000" ]]; then
               CHANGED_FILES="$(git diff-tree --no-commit-id --name-only -r "${AFTER}")"
             else
@@ -94,6 +123,7 @@ jobs:
             if echo "${CHANGED_FILES}" | grep -Eq '^frontend/'; then
               BUILD_FRONTEND="true"
             fi
+
             if echo "${CHANGED_FILES}" | grep -Eq '^backend/'; then
               BUILD_BACKEND="true"
             fi
@@ -110,10 +140,19 @@ jobs:
           fi
 
           IMAGE_TAG="${GITHUB_SHA}"
+
+          # The changed workload gets the new SHA tag.
+          # Unchanged workloads stay on latest so Terraform does not force unrelated image updates.
           FRONTEND_IMAGE_TAG="latest"
           BACKEND_IMAGE_TAG="latest"
-          if [[ "${BUILD_FRONTEND}" == "true" ]]; then FRONTEND_IMAGE_TAG="${IMAGE_TAG}"; fi
-          if [[ "${BUILD_BACKEND}" == "true" ]]; then BACKEND_IMAGE_TAG="${IMAGE_TAG}"; fi
+
+          if [[ "${BUILD_FRONTEND}" == "true" ]]; then
+            FRONTEND_IMAGE_TAG="${IMAGE_TAG}"
+          fi
+
+          if [[ "${BUILD_BACKEND}" == "true" ]]; then
+            BACKEND_IMAGE_TAG="${IMAGE_TAG}"
+          fi
 
           echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
           echo "workload=${WORKLOAD}" >> "$GITHUB_OUTPUT"
@@ -122,40 +161,48 @@ jobs:
           echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "frontend_image_tag=${FRONTEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "backend_image_tag=${BACKEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "aws_account_id=${RESOLVED_AWS_ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
+
+          echo "Resolved environment: ${ENVIRONMENT}"
+          echo "Resolved workload: ${WORKLOAD}"
+          echo "Build frontend: ${BUILD_FRONTEND}"
+          echo "Build backend: ${BUILD_BACKEND}"
+          echo "Image tag: ${IMAGE_TAG}"
+          echo "Frontend deploy tag: ${FRONTEND_IMAGE_TAG}"
+          echo "Backend deploy tag: ${BACKEND_IMAGE_TAG}"
 
   build:
     name: Build Images
     needs: resolve
     if: needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true'
     runs-on: ubuntu-latest
+
+    env:
+      ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+      IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
+      RESOLVED_AWS_ACCOUNT_ID: ${{ needs.resolve.outputs.aws_account_id }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Resolve image names
-        id: images
+      - name: Build frontend image
+        if: needs.resolve.outputs.build_frontend == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          echo "frontend_image=${ECR_REGISTRY}/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-frontend:${{ needs.resolve.outputs.image_tag }}" >> "$GITHUB_OUTPUT"
-          echo "backend_image=${ECR_REGISTRY}/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-backend:${{ needs.resolve.outputs.image_tag }}" >> "$GITHUB_OUTPUT"
-
-      - name: Build frontend image
-        if: needs.resolve.outputs.build_frontend == 'true'
-        run: docker build -t "${{ steps.images.outputs.frontend_image }}" frontend
+          FRONTEND_IMAGE="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend:${IMAGE_TAG}"
+          docker build -t "${FRONTEND_IMAGE}" frontend
+          docker save "${FRONTEND_IMAGE}" -o frontend-image.tar
 
       - name: Build backend image
         if: needs.resolve.outputs.build_backend == 'true'
-        run: docker build -t "${{ steps.images.outputs.backend_image }}" backend
-
-      - name: Save frontend image artifact
-        if: needs.resolve.outputs.build_frontend == 'true'
-        run: docker save "${{ steps.images.outputs.frontend_image }}" -o frontend-image.tar
-
-      - name: Save backend image artifact
-        if: needs.resolve.outputs.build_backend == 'true'
-        run: docker save "${{ steps.images.outputs.backend_image }}" -o backend-image.tar
+        shell: bash
+        run: |
+          set -euo pipefail
+          BACKEND_IMAGE="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${ENVIRONMENT}/todo-backend:${IMAGE_TAG}"
+          docker build -t "${BACKEND_IMAGE}" backend
+          docker save "${BACKEND_IMAGE}" -o backend-image.tar
 
       - name: Upload Docker images
         uses: actions/upload-artifact@v4
@@ -164,13 +211,19 @@ jobs:
           path: |
             frontend-image.tar
             backend-image.tar
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   test:
     name: Test Images
     needs: [resolve, build]
     if: needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true'
     runs-on: ubuntu-latest
+
+    env:
+      ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+      IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
+      RESOLVED_AWS_ACCOUNT_ID: ${{ needs.resolve.outputs.aws_account_id }}
+
     steps:
       - name: Download Docker images
         uses: actions/download-artifact@v4
@@ -178,7 +231,7 @@ jobs:
           name: docker-images-${{ needs.resolve.outputs.image_tag }}
           path: .
 
-      - name: Load Docker images
+      - name: Load Docker image artifacts
         shell: bash
         run: |
           set -euo pipefail
@@ -205,21 +258,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-frontend:${{ needs.resolve.outputs.image_tag }}"
-          docker run -d --name frontend-test -p 8080:80 "$IMAGE"
-          for i in {1..20}; do
-            curl -fsS http://localhost:8080 && break || sleep 3
+
+          IMAGE="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend:${IMAGE_TAG}"
+
+          docker run -d --name frontend-test -p 8080:80 "${IMAGE}"
+
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8080 >/dev/null; then
+              echo "Frontend health check passed."
+              docker rm -f frontend-test
+              exit 0
+            fi
+            echo "Waiting for frontend container..."
+            sleep 3
           done
-          curl -fsS http://localhost:8080
-          docker rm -f frontend-test
+
+          echo "Frontend container failed health check."
+          docker logs frontend-test || true
+          docker rm -f frontend-test || true
+          exit 1
 
       - name: Test backend container
         if: needs.resolve.outputs.build_backend == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-backend:${{ needs.resolve.outputs.image_tag }}"
+
+          IMAGE="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${ENVIRONMENT}/todo-backend:${IMAGE_TAG}"
+
           docker network create todo-test
+
           docker run -d --name todo-mysql-test --network todo-test \
             -e MYSQL_ROOT_PASSWORD=testpass \
             -e MYSQL_DATABASE=todoapp \
@@ -227,8 +295,10 @@ jobs:
             -e MYSQL_PASSWORD=testpass \
             mysql:8
 
+          echo "Waiting for MySQL to accept real todo_admin connections..."
           for i in {1..40}; do
             if docker exec todo-mysql-test mysql -h 127.0.0.1 -utodo_admin -ptestpass -D todoapp -e "SELECT 1;" >/dev/null 2>&1; then
+              echo "MySQL is ready."
               break
             fi
             sleep 3
@@ -240,20 +310,36 @@ jobs:
             -e DB_NAME=todoapp \
             -e DB_USER=todo_admin \
             -e DB_PASSWORD=testpass \
-            "$IMAGE"
+            "${IMAGE}"
 
-          for i in {1..30}; do
-            curl -fsS http://localhost:8000/health && break || sleep 3
+          for i in {1..40}; do
+            if curl -fsS http://localhost:8000/health >/dev/null; then
+              echo "Backend health check passed."
+              docker rm -f todo-backend-test todo-mysql-test
+              docker network rm todo-test
+              exit 0
+            fi
+            echo "Waiting for backend container..."
+            sleep 3
           done
-          curl -fsS http://localhost:8000/health
-          docker rm -f todo-backend-test todo-mysql-test
-          docker network rm todo-test
+
+          echo "Backend container failed health check."
+          docker logs todo-backend-test || true
+          docker rm -f todo-backend-test todo-mysql-test || true
+          docker network rm todo-test || true
+          exit 1
 
   push:
     name: Push Images
     needs: [resolve, test]
     if: needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true'
     runs-on: ubuntu-latest
+
+    env:
+      ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+      IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
+      RESOLVED_AWS_ACCOUNT_ID: ${{ needs.resolve.outputs.aws_account_id }}
+
     steps:
       - name: Configure AWS credentials using GitHub OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -271,7 +357,7 @@ jobs:
           name: docker-images-${{ needs.resolve.outputs.image_tag }}
           path: .
 
-      - name: Load Docker images
+      - name: Load Docker image artifacts
         shell: bash
         run: |
           set -euo pipefail
@@ -297,34 +383,72 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           if [[ "${{ needs.resolve.outputs.build_frontend }}" == "true" ]]; then
-            aws ecr describe-repositories --repository-names "${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-frontend" >/dev/null 2>&1 || \
-            aws ecr create-repository --repository-name "${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-frontend" --image-scanning-configuration scanOnPush=true
-          fi
-          if [[ "${{ needs.resolve.outputs.build_backend }}" == "true" ]]; then
-            aws ecr describe-repositories --repository-names "${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-backend" >/dev/null 2>&1 || \
-            aws ecr create-repository --repository-name "${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-backend" --image-scanning-configuration scanOnPush=true
+            aws ecr describe-repositories \
+              --region "${AWS_REGION}" \
+              --repository-names "${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend" >/dev/null 2>&1 || \
+            aws ecr create-repository \
+              --region "${AWS_REGION}" \
+              --repository-name "${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend" \
+              --image-scanning-configuration scanOnPush=true
           fi
 
-      - name: Push frontend image
+          if [[ "${{ needs.resolve.outputs.build_backend }}" == "true" ]]; then
+            aws ecr describe-repositories \
+              --region "${AWS_REGION}" \
+              --repository-names "${PROJECT_NAME}/${ENVIRONMENT}/todo-backend" >/dev/null 2>&1 || \
+            aws ecr create-repository \
+              --region "${AWS_REGION}" \
+              --repository-name "${PROJECT_NAME}/${ENVIRONMENT}/todo-backend" \
+              --image-scanning-configuration scanOnPush=true
+          fi
+
+      - name: Push frontend image with SHA and latest tags
         if: needs.resolve.outputs.build_frontend == 'true'
         shell: bash
         run: |
-          IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-frontend:${{ needs.resolve.outputs.image_tag }}"
-          LATEST="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-frontend:latest"
-          docker tag "$IMAGE" "$LATEST"
-          docker push "$IMAGE"
-          docker push "$LATEST"
+          set -euo pipefail
 
-      - name: Push backend image
+          REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
+          IMAGE_SHA="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO}:${IMAGE_TAG}"
+          IMAGE_LATEST="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO}:latest"
+
+          docker tag "${IMAGE_SHA}" "${IMAGE_LATEST}"
+
+          docker push "${IMAGE_SHA}"
+          docker push "${IMAGE_LATEST}"
+
+          echo "Verifying frontend ECR tags exist..."
+          aws ecr describe-images \
+            --region "${AWS_REGION}" \
+            --repository-name "${REPO}" \
+            --image-ids imageTag="${IMAGE_TAG}" imageTag=latest \
+            --query "imageDetails[*].imageTags" \
+            --output table
+
+      - name: Push backend image with SHA and latest tags
         if: needs.resolve.outputs.build_backend == 'true'
         shell: bash
         run: |
-          IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-backend:${{ needs.resolve.outputs.image_tag }}"
-          LATEST="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-backend:latest"
-          docker tag "$IMAGE" "$LATEST"
-          docker push "$IMAGE"
-          docker push "$LATEST"
+          set -euo pipefail
+
+          REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
+          IMAGE_SHA="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO}:${IMAGE_TAG}"
+          IMAGE_LATEST="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO}:latest"
+
+          docker tag "${IMAGE_SHA}" "${IMAGE_LATEST}"
+
+          docker push "${IMAGE_SHA}"
+          docker push "${IMAGE_LATEST}"
+
+          echo "Verifying backend ECR tags exist..."
+          aws ecr describe-images \
+            --region "${AWS_REGION}" \
+            --repository-name "${REPO}" \
+            --image-ids imageTag="${IMAGE_TAG}" imageTag=latest \
+            --query "imageDetails[*].imageTags" \
+            --output table
 
   deploy-dev:
     name: Deploy Dev Workload With New Image

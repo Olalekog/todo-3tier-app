@@ -15,7 +15,7 @@ function App() {
     setError('');
     try {
       const res = await fetch(`${API_BASE}/todos`);
-      if (!res.ok) throw new Error('Failed to load todos from backend');
+      if (!res.ok) throw new Error('Failed to load todos application');
       setTodos(await res.json());
     } catch (err) {
       setError(err.message);
@@ -34,7 +34,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title })
       });
-      if (!res.ok) throw new Error('Failed to add todo to from backend');
+      if (!res.ok) throw new Error('Failed to add todo application');
       setTitle('');
       await loadTodos();
     } catch (err) {
@@ -50,7 +50,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ completed: !todo.completed })
       });
-      if (!res.ok) throw new Error('Failed to update todo in backend');
+      if (!res.ok) throw new Error('Failed to update todo application');
       await loadTodos();
     } catch (err) {
       setError(err.message);
@@ -61,7 +61,7 @@ function App() {
     setError('');
     try {
       const res = await fetch(`${API_BASE}/todos/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Failed to delete todo from backend');
+      if (!res.ok) throw new Error('Failed to delete todo application');
       await loadTodos();
     } catch (err) {
       setError(err.message);
