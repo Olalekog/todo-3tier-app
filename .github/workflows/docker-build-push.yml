@@ -2,37 +2,33 @@ name: Docker Build Test Push
 
 on:
   push:
-    branches:
-      - dev
-      - uat
-      - prod
+    branches: [dev, uat, prod]
     paths:
-      # Container/application changes should build a new image.
       - "frontend/**"
       - "backend/**"
-      # Workflow changes should validate the Docker workflow.
+      - "terraform/**"
       - ".github/workflows/docker-build-push.yml"
+      - ".github/workflows/deploy.yml"
   workflow_dispatch:
     inputs:
       environment:
-        description: Environment to build for
+        description: Environment
         required: true
         type: choice
-        options:
-          - dev
-          - uat
-          - prod
+        options: [dev, uat, prod]
         default: dev
+      workload:
+        description: Workload to build
+        required: true
+        type: choice
+        options: [frontend, backend, app]
+        default: app
 
 permissions:
   id-token: write
   contents: read
   pull-requests: read
   actions: read
-
-concurrency:
-  group: docker-${{ github.ref }}
-  cancel-in-progress: false
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
@@ -43,250 +39,185 @@ env:
 
 jobs:
   resolve:
-    name: Resolve Build Inputs
+    name: Resolve Changes
     runs-on: ubuntu-latest
     outputs:
       environment: ${{ steps.resolve.outputs.environment }}
+      workload: ${{ steps.resolve.outputs.workload }}
+      build_frontend: ${{ steps.resolve.outputs.build_frontend }}
+      build_backend: ${{ steps.resolve.outputs.build_backend }}
       image_tag: ${{ steps.resolve.outputs.image_tag }}
-      aws_account_id: ${{ steps.resolve.outputs.aws_account_id }}
-      frontend_repo: ${{ steps.resolve.outputs.frontend_repo }}
-      backend_repo: ${{ steps.resolve.outputs.backend_repo }}
-      frontend_image: ${{ steps.resolve.outputs.frontend_image }}
-      backend_image: ${{ steps.resolve.outputs.backend_image }}
-      frontend_image_latest: ${{ steps.resolve.outputs.frontend_image_latest }}
-      backend_image_latest: ${{ steps.resolve.outputs.backend_image_latest }}
-    steps:
-      - name: Resolve environment and image names
-        id: resolve
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            ENVIRONMENT="${{ inputs.environment }}"
-          else
-            case "${GITHUB_REF_NAME}" in
-              dev) ENVIRONMENT="dev" ;;
-              uat) ENVIRONMENT="uat" ;;
-              prod) ENVIRONMENT="prod" ;;
-              *) echo "Unsupported branch: ${GITHUB_REF_NAME}"; exit 1 ;;
-            esac
-          fi
-
-          if [[ -z "${PROJECT_NAME}" ]]; then
-            echo "Missing required GitHub variable: PROJECT_NAME"
-            exit 1
-          fi
-
-          if [[ -z "${AWS_REGION}" ]]; then
-            echo "Missing required GitHub variable: AWS_REGION"
-            exit 1
-          fi
-
-          if [[ -z "${BOOTSTRAP_ROLE_ARN}" ]]; then
-            echo "Missing required GitHub variable: BOOTSTRAP_ROLE_ARN"
-            exit 1
-          fi
-
-          RESOLVED_AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
-          if [[ -z "${RESOLVED_AWS_ACCOUNT_ID}" ]]; then
-            RESOLVED_AWS_ACCOUNT_ID="$(echo "${BOOTSTRAP_ROLE_ARN}" | awk -F: '{print $5}')"
-          fi
-
-          if [[ -z "${RESOLVED_AWS_ACCOUNT_ID}" ]]; then
-            echo "Could not resolve AWS account ID. Set AWS_ACCOUNT_ID or use a valid BOOTSTRAP_ROLE_ARN."
-            exit 1
-          fi
-
-          IMAGE_TAG="${GITHUB_SHA}"
-          FRONTEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
-          BACKEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
-          ECR_REGISTRY="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-
-          echo "environment=${ENVIRONMENT}" >> "${GITHUB_OUTPUT}"
-          echo "image_tag=${IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
-          echo "aws_account_id=${RESOLVED_AWS_ACCOUNT_ID}" >> "${GITHUB_OUTPUT}"
-          echo "frontend_repo=${FRONTEND_REPO}" >> "${GITHUB_OUTPUT}"
-          echo "backend_repo=${BACKEND_REPO}" >> "${GITHUB_OUTPUT}"
-          echo "frontend_image=${ECR_REGISTRY}/${FRONTEND_REPO}:${IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
-          echo "backend_image=${ECR_REGISTRY}/${BACKEND_REPO}:${IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
-          echo "frontend_image_latest=${ECR_REGISTRY}/${FRONTEND_REPO}:latest" >> "${GITHUB_OUTPUT}"
-          echo "backend_image_latest=${ECR_REGISTRY}/${BACKEND_REPO}:latest" >> "${GITHUB_OUTPUT}"
-
-
-  container-changes:
-    name: Check Container/App Changes
-    needs: resolve
-    runs-on: ubuntu-latest
-    outputs:
-      container_changed: ${{ steps.changes.outputs.container_changed }}
-      changed_files: ${{ steps.changes.outputs.changed_files }}
+      frontend_image_tag: ${{ steps.resolve.outputs.frontend_image_tag }}
+      backend_image_tag: ${{ steps.resolve.outputs.backend_image_tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Check whether container or app files changed
-        id: changes
+      - name: Resolve environment and changed workload
+        id: resolve
         shell: bash
         run: |
           set -euo pipefail
 
-          # Manual workflow runs are intentional builds.
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "Manual workflow run detected. Docker build is enabled."
-            echo "container_changed=true" >> "${GITHUB_OUTPUT}"
-            echo "changed_files=workflow_dispatch" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          BEFORE_SHA="${{ github.event.before }}"
-          AFTER_SHA="${{ github.sha }}"
-
-          # First push to a branch may have a zero BEFORE SHA.
-          if [[ -z "${BEFORE_SHA}" || "${BEFORE_SHA}" =~ ^0+$ ]]; then
-            BEFORE_SHA="HEAD~1"
-          fi
-
-          CHANGED_FILES="$(git diff --name-only "${BEFORE_SHA}" "${AFTER_SHA}" || true)"
-          echo "Changed files:"
-          echo "${CHANGED_FILES}"
-
-          # Build a new image when anything that can affect the container image changes.
-          # This includes Dockerfiles and source/config files under frontend/ or backend/.
-          if echo "${CHANGED_FILES}" | grep -E '^(frontend/|backend/)' >/dev/null 2>&1; then
-            echo "Container/app change detected. Docker build/test/push will run."
-            echo "container_changed=true" >> "${GITHUB_OUTPUT}"
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+            REQUESTED_WORKLOAD="${{ github.event.inputs.workload }}"
+            if [[ "${REQUESTED_WORKLOAD}" == "frontend" ]]; then
+              BUILD_FRONTEND="true"; BUILD_BACKEND="false"; WORKLOAD="frontend"
+            elif [[ "${REQUESTED_WORKLOAD}" == "backend" ]]; then
+              BUILD_FRONTEND="false"; BUILD_BACKEND="true"; WORKLOAD="backend"
+            else
+              BUILD_FRONTEND="true"; BUILD_BACKEND="true"; WORKLOAD="app"
+            fi
           else
-            echo "No container/app change detected. Docker build/test/push will be skipped."
-            echo "container_changed=false" >> "${GITHUB_OUTPUT}"
+            case "${GITHUB_REF_NAME}" in
+              dev|uat|prod) ENVIRONMENT="${GITHUB_REF_NAME}" ;;
+              *) echo "Unsupported branch: ${GITHUB_REF_NAME}"; exit 1 ;;
+            esac
+
+            BEFORE="${{ github.event.before }}"
+            AFTER="${{ github.sha }}"
+            if [[ -z "${BEFORE}" || "${BEFORE}" == "0000000000000000000000000000000000000000" ]]; then
+              CHANGED_FILES="$(git diff-tree --no-commit-id --name-only -r "${AFTER}")"
+            else
+              CHANGED_FILES="$(git diff --name-only "${BEFORE}" "${AFTER}")"
+            fi
+
+            echo "Changed files:"
+            echo "${CHANGED_FILES}"
+
+            BUILD_FRONTEND="false"
+            BUILD_BACKEND="false"
+
+            if echo "${CHANGED_FILES}" | grep -Eq '^frontend/'; then
+              BUILD_FRONTEND="true"
+            fi
+            if echo "${CHANGED_FILES}" | grep -Eq '^backend/'; then
+              BUILD_BACKEND="true"
+            fi
+
+            if [[ "${BUILD_FRONTEND}" == "true" && "${BUILD_BACKEND}" == "true" ]]; then
+              WORKLOAD="app"
+            elif [[ "${BUILD_FRONTEND}" == "true" ]]; then
+              WORKLOAD="frontend"
+            elif [[ "${BUILD_BACKEND}" == "true" ]]; then
+              WORKLOAD="backend"
+            else
+              WORKLOAD="infra"
+            fi
           fi
 
-          # Keep output single-line safe.
-          echo "changed_files=$(echo "${CHANGED_FILES}" | tr '\n' ' ' | sed 's/[[:space:]]*$//')" >> "${GITHUB_OUTPUT}"
+          IMAGE_TAG="${GITHUB_SHA}"
+          FRONTEND_IMAGE_TAG="latest"
+          BACKEND_IMAGE_TAG="latest"
+          if [[ "${BUILD_FRONTEND}" == "true" ]]; then FRONTEND_IMAGE_TAG="${IMAGE_TAG}"; fi
+          if [[ "${BUILD_BACKEND}" == "true" ]]; then BACKEND_IMAGE_TAG="${IMAGE_TAG}"; fi
+
+          echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
+          echo "workload=${WORKLOAD}" >> "$GITHUB_OUTPUT"
+          echo "build_frontend=${BUILD_FRONTEND}" >> "$GITHUB_OUTPUT"
+          echo "build_backend=${BUILD_BACKEND}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image_tag=${FRONTEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "backend_image_tag=${BACKEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build Docker Images
-    needs:
-      - resolve
-      - container-changes
-    if: needs.container-changes.outputs.container_changed == 'true'
+    name: Build Images
+    needs: resolve
+    if: needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate Docker directories
+      - name: Resolve image names
+        id: images
         shell: bash
         run: |
-          test -d frontend || (echo "Missing frontend directory" && exit 1)
-          test -d backend || (echo "Missing backend directory" && exit 1)
-          test -f frontend/Dockerfile || (echo "Missing frontend/Dockerfile" && exit 1)
-          test -f backend/Dockerfile || (echo "Missing backend/Dockerfile" && exit 1)
+          set -euo pipefail
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "frontend_image=${ECR_REGISTRY}/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-frontend:${{ needs.resolve.outputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          echo "backend_image=${ECR_REGISTRY}/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-backend:${{ needs.resolve.outputs.image_tag }}" >> "$GITHUB_OUTPUT"
 
       - name: Build frontend image
-        shell: bash
-        run: |
-          docker build \
-            -t "${{ needs.resolve.outputs.frontend_image }}" \
-            -t "${{ needs.resolve.outputs.frontend_image_latest }}" \
-            frontend
+        if: needs.resolve.outputs.build_frontend == 'true'
+        run: docker build -t "${{ steps.images.outputs.frontend_image }}" frontend
 
       - name: Build backend image
-        shell: bash
-        run: |
-          docker build \
-            -t "${{ needs.resolve.outputs.backend_image }}" \
-            -t "${{ needs.resolve.outputs.backend_image_latest }}" \
-            backend
+        if: needs.resolve.outputs.build_backend == 'true'
+        run: docker build -t "${{ steps.images.outputs.backend_image }}" backend
 
-      - name: Save Docker images as artifacts
-        shell: bash
-        run: |
-          mkdir -p docker-images
-          docker save "${{ needs.resolve.outputs.frontend_image }}" "${{ needs.resolve.outputs.frontend_image_latest }}" -o docker-images/frontend-image.tar
-          docker save "${{ needs.resolve.outputs.backend_image }}" "${{ needs.resolve.outputs.backend_image_latest }}" -o docker-images/backend-image.tar
+      - name: Save frontend image artifact
+        if: needs.resolve.outputs.build_frontend == 'true'
+        run: docker save "${{ steps.images.outputs.frontend_image }}" -o frontend-image.tar
 
-      - name: Upload Docker image artifacts
+      - name: Save backend image artifact
+        if: needs.resolve.outputs.build_backend == 'true'
+        run: docker save "${{ steps.images.outputs.backend_image }}" -o backend-image.tar
+
+      - name: Upload Docker images
         uses: actions/upload-artifact@v4
         with:
-          name: docker-images-${{ needs.resolve.outputs.environment }}-${{ needs.resolve.outputs.image_tag }}
-          path: docker-images/*.tar
-          retention-days: 1
+          name: docker-images-${{ needs.resolve.outputs.image_tag }}
+          path: |
+            frontend-image.tar
+            backend-image.tar
+          if-no-files-found: ignore
 
   test:
-    name: Test Docker Images
-    needs:
-      - resolve
-      - container-changes
-      - build
-    if: needs.container-changes.outputs.container_changed == 'true'
+    name: Test Images
+    needs: [resolve, build]
+    if: needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Download Docker image artifacts
+      - name: Download Docker images
         uses: actions/download-artifact@v4
         with:
-          name: docker-images-${{ needs.resolve.outputs.environment }}-${{ needs.resolve.outputs.image_tag }}
-          path: docker-images
+          name: docker-images-${{ needs.resolve.outputs.image_tag }}
+          path: .
 
       - name: Load Docker images
         shell: bash
         run: |
-          docker load -i docker-images/frontend-image.tar
-          docker load -i docker-images/backend-image.tar
+          set -euo pipefail
+          [[ -f frontend-image.tar ]] && docker load -i frontend-image.tar
+          [[ -f backend-image.tar ]] && docker load -i backend-image.tar
 
       - name: Test frontend container
-        shell: bash
-        run: |
-          docker run -d --name todo-frontend-test -p 8080:80 "${{ needs.resolve.outputs.frontend_image }}"
-          sleep 10
-          curl -f http://localhost:8080 || (docker logs todo-frontend-test && exit 1)
-          docker rm -f todo-frontend-test
-
-      - name: Test backend container
+        if: needs.resolve.outputs.build_frontend == 'true'
         shell: bash
         run: |
           set -euo pipefail
+          IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-frontend:${{ needs.resolve.outputs.image_tag }}"
+          docker run -d --name frontend-test -p 8080:80 "$IMAGE"
+          for i in {1..20}; do
+            curl -fsS http://localhost:8080 && break || sleep 3
+          done
+          curl -fsS http://localhost:8080
+          docker rm -f frontend-test
 
-          cleanup() {
-            docker rm -f todo-backend-test todo-mysql-test >/dev/null 2>&1 || true
-            docker network rm todo-test >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-
-          cleanup
+      - name: Test backend container
+        if: needs.resolve.outputs.build_backend == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-backend:${{ needs.resolve.outputs.image_tag }}"
           docker network create todo-test
-
           docker run -d --name todo-mysql-test --network todo-test \
             -e MYSQL_ROOT_PASSWORD=testpass \
             -e MYSQL_DATABASE=todoapp \
             -e MYSQL_USER=todo_admin \
             -e MYSQL_PASSWORD=testpass \
-            --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -ptestpass --silent" \
-            --health-interval=5s \
-            --health-timeout=5s \
-            --health-retries=30 \
             mysql:8
 
-          echo "Waiting for MySQL to become ready..."
-          MYSQL_READY=false
-          for i in {1..60}; do
-            if docker exec todo-mysql-test mysqladmin ping -h 127.0.0.1 -uroot -ptestpass --silent >/dev/null 2>&1 && \
-               docker exec todo-mysql-test mysql -h 127.0.0.1 -utodo_admin -ptestpass -D todoapp -e "SELECT 1;" >/dev/null 2>&1; then
-              MYSQL_READY=true
-              echo "MySQL is ready."
+          for i in {1..40}; do
+            if docker exec todo-mysql-test mysql -h 127.0.0.1 -utodo_admin -ptestpass -D todoapp -e "SELECT 1;" >/dev/null 2>&1; then
               break
             fi
-            echo "MySQL not ready yet. Attempt ${i}/60"
             sleep 3
           done
-
-          if [[ "${MYSQL_READY}" != "true" ]]; then
-            echo "MySQL did not become ready in time."
-            docker logs todo-mysql-test
-            exit 1
-          fi
 
           docker run -d --name todo-backend-test --network todo-test -p 8000:8000 \
             -e DB_HOST=todo-mysql-test \
@@ -294,57 +225,21 @@ jobs:
             -e DB_NAME=todoapp \
             -e DB_USER=todo_admin \
             -e DB_PASSWORD=testpass \
-            "${{ needs.resolve.outputs.backend_image }}"
+            "$IMAGE"
 
-          echo "Waiting for backend health endpoint..."
-          BACKEND_READY=false
-          for i in {1..40}; do
-            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
-              BACKEND_READY=true
-              echo "Backend is healthy."
-              break
-            fi
-
-            if ! docker ps --format '{{.Names}}' | grep -q '^todo-backend-test$'; then
-              echo "Backend container exited early."
-              docker logs todo-backend-test
-              exit 1
-            fi
-
-            echo "Backend not ready yet. Attempt ${i}/40"
-            sleep 3
+          for i in {1..30}; do
+            curl -fsS http://localhost:8000/health && break || sleep 3
           done
-
-          if [[ "${BACKEND_READY}" != "true" ]]; then
-            echo "Backend did not become healthy in time."
-            docker logs todo-backend-test
-            exit 1
-          fi
+          curl -fsS http://localhost:8000/health
+          docker rm -f todo-backend-test todo-mysql-test
+          docker network rm todo-test
 
   push:
-    name: Push Docker Images to ECR
-    needs:
-      - resolve
-      - container-changes
-      - test
-    if: needs.container-changes.outputs.container_changed == 'true'
+    name: Push Images
+    needs: [resolve, test]
+    if: needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     steps:
-      - name: Download Docker image artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-images-${{ needs.resolve.outputs.environment }}-${{ needs.resolve.outputs.image_tag }}
-          path: docker-images
-
-      - name: Load Docker images
-        shell: bash
-        run: |
-          docker load -i docker-images/frontend-image.tar
-          docker load -i docker-images/backend-image.tar
-
       - name: Configure AWS credentials using GitHub OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -352,55 +247,77 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActionsDockerPush
 
-      - name: Confirm AWS identity
-        shell: bash
-        run: aws sts get-caller-identity
-
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Download Docker images
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-images-${{ needs.resolve.outputs.image_tag }}
+          path: .
+
+      - name: Load Docker images
+        run: |
+          [[ -f frontend-image.tar ]] && docker load -i frontend-image.tar
+          [[ -f backend-image.tar ]] && docker load -i backend-image.tar
 
       - name: Ensure ECR repositories exist
         shell: bash
         run: |
-          for REPO in "${{ needs.resolve.outputs.frontend_repo }}" "${{ needs.resolve.outputs.backend_repo }}"; do
-            aws ecr describe-repositories --repository-names "${REPO}" >/dev/null 2>&1 || \
-            aws ecr create-repository --repository-name "${REPO}" --image-scanning-configuration scanOnPush=true
-          done
+          set -euo pipefail
+          if [[ "${{ needs.resolve.outputs.build_frontend }}" == "true" ]]; then
+            aws ecr describe-repositories --repository-names "${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-frontend" >/dev/null 2>&1 || \
+            aws ecr create-repository --repository-name "${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-frontend" --image-scanning-configuration scanOnPush=true
+          fi
+          if [[ "${{ needs.resolve.outputs.build_backend }}" == "true" ]]; then
+            aws ecr describe-repositories --repository-names "${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-backend" >/dev/null 2>&1 || \
+            aws ecr create-repository --repository-name "${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-backend" --image-scanning-configuration scanOnPush=true
+          fi
 
-      - name: Push images
+      - name: Push frontend image
+        if: needs.resolve.outputs.build_frontend == 'true'
         shell: bash
         run: |
-          docker push "${{ needs.resolve.outputs.frontend_image }}"
-          docker push "${{ needs.resolve.outputs.frontend_image_latest }}"
-          docker push "${{ needs.resolve.outputs.backend_image }}"
-          docker push "${{ needs.resolve.outputs.backend_image_latest }}"
+          IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-frontend:${{ needs.resolve.outputs.image_tag }}"
+          LATEST="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-frontend:latest"
+          docker tag "$IMAGE" "$LATEST"
+          docker push "$IMAGE"
+          docker push "$LATEST"
 
-
-  skip-no-dockerfile-change:
-    name: Skip Build - No Container/App Change
-    needs:
-      - resolve
-      - container-changes
-    if: needs.container-changes.outputs.container_changed != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Explain skip
+      - name: Push backend image
+        if: needs.resolve.outputs.build_backend == 'true'
         shell: bash
         run: |
-          echo "No frontend/ or backend/ change was detected."
-          echo "Skipping Docker image build, test, push, and automatic dev image deploy."
-          echo "Changed files: ${{ needs.container-changes.outputs.changed_files }}"
+          IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-backend:${{ needs.resolve.outputs.image_tag }}"
+          LATEST="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${{ needs.resolve.outputs.environment }}/todo-backend:latest"
+          docker tag "$IMAGE" "$LATEST"
+          docker push "$IMAGE"
+          docker push "$LATEST"
 
   deploy-dev:
-    name: Deploy Dev With New Image
-    needs:
-      - resolve
-      - container-changes
-      - push
-    if: needs.resolve.outputs.environment == 'dev' && needs.container-changes.outputs.container_changed == 'true'
+    name: Deploy Dev Workload With New Image
+    needs: [resolve, push]
+    if: needs.resolve.outputs.environment == 'dev' && (needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true')
     uses: ./.github/workflows/deploy.yml
     with:
       environment: dev
       action: apply
-      image_tag: ${{ needs.resolve.outputs.image_tag }}
+      workload: ${{ needs.resolve.outputs.workload }}
+      frontend_image_tag: ${{ needs.resolve.outputs.frontend_image_tag }}
+      backend_image_tag: ${{ needs.resolve.outputs.backend_image_tag }}
+      allow_replacement: false
+    secrets: inherit
+
+  deploy-dev-infra-only:
+    name: Deploy Dev Infrastructure Only
+    needs: resolve
+    if: needs.resolve.outputs.environment == 'dev' && needs.resolve.outputs.workload == 'infra'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: dev
+      action: apply
+      workload: infra
+      frontend_image_tag: latest
+      backend_image_tag: latest
+      allow_replacement: false
     secrets: inherit
