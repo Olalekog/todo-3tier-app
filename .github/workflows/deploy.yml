@@ -21,7 +21,7 @@ on:
         description: Allow intentional destroy or replacement actions
         required: false
         type: string
-        default: "true"
+        default: "false"
 
   workflow_dispatch:
     inputs:
@@ -54,7 +54,7 @@ on:
         options:
           - "false"
           - "true"
-        default: "true"
+        default: "false"
 
   pull_request:
     branches:
@@ -118,13 +118,13 @@ jobs:
           INPUT_ENVIRONMENT="${{ inputs.environment || '' }}"
           INPUT_ACTION="${{ inputs.action || '' }}"
           INPUT_IMAGE_TAG="${{ inputs.image_tag || '' }}"
-          INPUT_ALLOW_REPLACEMENT="${{ inputs.allow_replacement || 'true' }}"
+          INPUT_ALLOW_REPLACEMENT="${{ inputs.allow_replacement || 'false' }}"
 
           if [[ -n "${INPUT_ENVIRONMENT}" ]]; then
             ENVIRONMENT="${INPUT_ENVIRONMENT}"
             ACTION="${INPUT_ACTION:-apply}"
             IMAGE_TAG="${INPUT_IMAGE_TAG:-latest}"
-            ALLOW_REPLACEMENT="${INPUT_ALLOW_REPLACEMENT:-true}"
+            ALLOW_REPLACEMENT="${INPUT_ALLOW_REPLACEMENT:-false}"
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             ENVIRONMENT="${{ github.event.inputs.environment }}"
             ACTION="${{ github.event.inputs.action }}"
@@ -147,7 +147,7 @@ jobs:
             ENVIRONMENT="${TARGET_BRANCH}"
             ACTION="plan"
             IMAGE_TAG="latest"
-            ALLOW_REPLACEMENT="true"
+            ALLOW_REPLACEMENT="false"
           elif [[ "${{ github.event_name }}" == "push" ]]; then
             BRANCH="${GITHUB_REF_NAME}"
             case "${BRANCH}" in
@@ -155,7 +155,7 @@ jobs:
                 ENVIRONMENT="${BRANCH}"
                 ACTION="apply"
                 IMAGE_TAG="latest"
-                ALLOW_REPLACEMENT="true"
+                ALLOW_REPLACEMENT="false"
                 ;;
               *)
                 echo "Unsupported branch: ${BRANCH}"
@@ -182,8 +182,8 @@ jobs:
             *) echo "Invalid allow_replacement value: ${ALLOW_REPLACEMENT}. Use true or false."; exit 1 ;;
           esac
 
-          if [[ "${ACTION}" == "destroy" && "${ALLOW_REPLACEMENT}" != "true" ]]; then
-            echo "Destroy is blocked unless allow_replacement=true."
+          if [[ "${ACTION}" == "destroy" && "${ALLOW_REPLACEMENT}" != "false" ]]; then
+            echo "Destroy is blocked unless allow_replacement=false."
             exit 1
           fi
 
@@ -381,14 +381,14 @@ jobs:
             echo "has_destructive_changes=false" >> "${GITHUB_OUTPUT}"
           fi
 
-          if [[ "${ACTION}" == "apply" && "${DESTRUCTIVE_COUNT}" -gt 0 && "${ALLOW_REPLACEMENT}" != "true" ]]; then
+          if [[ "${ACTION}" == "apply" && "${DESTRUCTIVE_COUNT}" -gt 0 && "${ALLOW_REPLACEMENT}" != "false" ]]; then
             echo "Blocking apply to avoid destroying or recreating application infrastructure."
             echo "To allow intentional replacement, run workflow_dispatch with allow_replacement=true."
             exit 1
           fi
 
-          if [[ "${ACTION}" == "destroy" && "${ALLOW_REPLACEMENT}" != "true" ]]; then
-            echo "Blocking destroy because allow_replacement is not true."
+          if [[ "${ACTION}" == "destroy" && "${ALLOW_REPLACEMENT}" != "false" ]]; then
+            echo "Blocking destroy because allow_replacement is not false."
             exit 1
           fi
 
@@ -461,7 +461,7 @@ jobs:
         run: terraform apply -auto-approve tfplan
 
       - name: Terraform Destroy
-        if: env.ACTION == 'destroy' && env.ALLOW_REPLACEMENT == 'true'
+        if: env.ACTION == 'destroy' && env.ALLOW_REPLACEMENT == 'false'
         working-directory: terraform
         run: terraform apply -auto-approve tfplan
 
@@ -526,6 +526,6 @@ jobs:
         run: terraform apply -auto-approve tfplan
 
       - name: Terraform Destroy
-        if: env.ACTION == 'destroy' && env.ALLOW_REPLACEMENT == 'true'
+        if: env.ACTION == 'destroy' && env.ALLOW_REPLACEMENT == 'false'
         working-directory: terraform
         run: terraform apply -auto-approve tfplan
