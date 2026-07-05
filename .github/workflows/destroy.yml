@@ -14,26 +14,23 @@ on:
         default: dev
 
       confirm_destroy:
-        description: Type DESTROY to confirm infrastructure deletion
+        description: Type DESTROY to confirm
         required: true
         type: string
 
       image_tag:
-        description: Legacy/default Docker image tag used only to satisfy Terraform variables
+        description: Legacy image tag
         required: false
-        type: string
         default: latest
 
       frontend_image_tag:
-        description: Frontend Docker image tag used only to satisfy Terraform variables
+        description: Frontend image tag
         required: false
-        type: string
         default: latest
 
       backend_image_tag:
-        description: Backend Docker image tag used only to satisfy Terraform variables
+        description: Backend image tag
         required: false
-        type: string
         default: latest
 
 permissions:
@@ -50,42 +47,37 @@ env:
   APP_DIR: .
 
 jobs:
-  validate:
-    name: Validate Destroy Request
+  destroy:
+    name: Destroy ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
-    outputs:
-      environment: ${{ steps.resolve.outputs.environment }}
-      tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
-      state_key: ${{ steps.resolve.outputs.state_key }}
-      image_tag: ${{ steps.resolve.outputs.image_tag }}
-      frontend_image_tag: ${{ steps.resolve.outputs.frontend_image_tag }}
-      backend_image_tag: ${{ steps.resolve.outputs.backend_image_tag }}
-      aws_account_id: ${{ steps.resolve.outputs.aws_account_id }}
+
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.environment }}
+      CONFIRM_DESTROY: ${{ github.event.inputs.confirm_destroy }}
+      IMAGE_TAG: ${{ github.event.inputs.image_tag }}
+      FRONTEND_IMAGE_TAG: ${{ github.event.inputs.frontend_image_tag }}
+      BACKEND_IMAGE_TAG: ${{ github.event.inputs.backend_image_tag }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Resolve destroy inputs
-        id: resolve
+      - name: Validate destroy confirmation and variables
         shell: bash
         run: |
           set -euo pipefail
 
-          ENVIRONMENT="${{ github.event.inputs.environment }}"
-          CONFIRM_DESTROY="${{ github.event.inputs.confirm_destroy }}"
-          IMAGE_TAG="${{ github.event.inputs.image_tag || 'latest' }}"
-          FRONTEND_IMAGE_TAG="${{ github.event.inputs.frontend_image_tag || 'latest' }}"
-          BACKEND_IMAGE_TAG="${{ github.event.inputs.backend_image_tag || 'latest' }}"
+          if [[ "${CONFIRM_DESTROY}" != "DESTROY" ]]; then
+            echo "Destroy confirmation failed."
+            echo "You must type exactly: DESTROY"
+            exit 1
+          fi
 
           case "${ENVIRONMENT}" in
             dev|uat|prod) ;;
             *) echo "Invalid environment: ${ENVIRONMENT}"; exit 1 ;;
           esac
-
-          if [[ "${CONFIRM_DESTROY}" != "DESTROY" ]]; then
-            echo "Destroy blocked. You must type DESTROY in confirm_destroy."
-            exit 1
-          fi
 
           REQUIRED_VARS=(
             "AWS_REGION"
@@ -93,64 +85,25 @@ jobs:
             "BOOTSTRAP_ROLE_ARN"
             "TF_STATE_BUCKET"
             "TERRAFORM_VERSION"
+            "DB_PASSWORD"
           )
 
           for VAR_NAME in "${REQUIRED_VARS[@]}"; do
             if [[ -z "${!VAR_NAME}" ]]; then
-              echo "Missing required GitHub variable: ${VAR_NAME}"
+              echo "Missing required variable or secret: ${VAR_NAME}"
               exit 1
             fi
           done
 
-          RESOLVED_AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-}"
-          if [[ -z "${RESOLVED_AWS_ACCOUNT_ID}" ]]; then
-            RESOLVED_AWS_ACCOUNT_ID="$(echo "${BOOTSTRAP_ROLE_ARN}" | awk -F: '{print $5}')"
-          fi
-
-          TFVARS_FILE="environments/${ENVIRONMENT}.tfvars"
-          STATE_KEY="${PROJECT_NAME}/${ENVIRONMENT}/terraform.tfstate"
-
-          if [[ ! -f "terraform/${TFVARS_FILE}" ]]; then
-            echo "Missing tfvars file: terraform/${TFVARS_FILE}"
-            find terraform -maxdepth 3 -type f | sort
+          if [[ ! -d "terraform" ]]; then
+            echo "Missing terraform directory. Make sure this is the flattened repo structure."
             exit 1
           fi
 
-          echo "environment=${ENVIRONMENT}" >> "${GITHUB_OUTPUT}"
-          echo "tfvars_file=${TFVARS_FILE}" >> "${GITHUB_OUTPUT}"
-          echo "state_key=${STATE_KEY}" >> "${GITHUB_OUTPUT}"
-          echo "image_tag=${IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
-          echo "frontend_image_tag=${FRONTEND_IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
-          echo "backend_image_tag=${BACKEND_IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
-          echo "aws_account_id=${RESOLVED_AWS_ACCOUNT_ID}" >> "${GITHUB_OUTPUT}"
-
-      - name: Display destroy summary
-        shell: bash
-        run: |
-          echo "Environment: ${{ steps.resolve.outputs.environment }}"
-          echo "State key: ${{ steps.resolve.outputs.state_key }}"
-          echo "Tfvars file: terraform/${{ steps.resolve.outputs.tfvars_file }}"
-          echo "Project: ${PROJECT_NAME}"
-          echo "AWS Region: ${AWS_REGION}"
-          echo "AWS Account ID: ${{ steps.resolve.outputs.aws_account_id }}"
-
-  terraform-destroy:
-    name: Terraform Destroy
-    needs: validate
-    runs-on: ubuntu-latest
-    environment: ${{ needs.validate.outputs.environment }}
-    env:
-      ENVIRONMENT: ${{ needs.validate.outputs.environment }}
-      TFVARS_FILE: ${{ needs.validate.outputs.tfvars_file }}
-      STATE_KEY: ${{ needs.validate.outputs.state_key }}
-      IMAGE_TAG: ${{ needs.validate.outputs.image_tag }}
-      FRONTEND_IMAGE_TAG: ${{ needs.validate.outputs.frontend_image_tag }}
-      BACKEND_IMAGE_TAG: ${{ needs.validate.outputs.backend_image_tag }}
-      AWS_ACCOUNT_ID: ${{ needs.validate.outputs.aws_account_id }}
-      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+          if [[ ! -f "terraform/environments/${ENVIRONMENT}.tfvars" ]]; then
+            echo "Missing tfvars file: terraform/environments/${ENVIRONMENT}.tfvars"
+            exit 1
+          fi
 
       - name: Configure AWS credentials using GitHub OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -160,9 +113,7 @@ jobs:
           role-session-name: GitHubActionsTerraformDestroy
 
       - name: Confirm AWS identity
-        shell: bash
-        run: |
-          aws sts get-caller-identity
+        run: aws sts get-caller-identity
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -174,16 +125,15 @@ jobs:
         working-directory: terraform
         shell: bash
         run: |
+          set -euo pipefail
+
+          STATE_KEY="${PROJECT_NAME}/${ENVIRONMENT}/terraform.tfstate"
+
           terraform init \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
             -backend-config="key=${STATE_KEY}" \
             -backend-config="region=${AWS_REGION}" \
             -backend-config="encrypt=true"
-
-      - name: Terraform Validate
-        working-directory: terraform
-        shell: bash
-        run: terraform validate
 
       - name: Terraform Destroy Plan
         working-directory: terraform
@@ -192,7 +142,7 @@ jobs:
           set -euo pipefail
 
           terraform plan -destroy \
-            -var-file="${TFVARS_FILE}" \
+            -var-file="environments/${ENVIRONMENT}.tfvars" \
             -var="aws_region=${AWS_REGION}" \
             -var="project_name=${PROJECT_NAME}" \
             -var="db_password=${DB_PASSWORD}" \
@@ -205,4 +155,5 @@ jobs:
         working-directory: terraform
         shell: bash
         run: |
+          set -euo pipefail
           terraform apply -auto-approve tf-destroy-plan
