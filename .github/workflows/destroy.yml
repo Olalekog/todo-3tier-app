@@ -11,7 +11,7 @@ on:
           - dev
           - uat
           - prod
-        default: dev
+        default: uat
 
       confirm_destroy:
         description: Type DESTROY to confirm
