@@ -91,6 +91,19 @@ variable "image_tag" {
   default     = "latest"
 }
 
+variable "frontend_image_tag" {
+  description = "Docker image tag for the frontend workload."
+  type        = string
+  default     = "latest"
+}
+
+variable "backend_image_tag" {
+  description = "Docker image tag for the backend workload."
+  type        = string
+  default     = "latest"
+}
+
+
 variable "db_name" {
   description = "Initial MySQL database name."
   type        = string
