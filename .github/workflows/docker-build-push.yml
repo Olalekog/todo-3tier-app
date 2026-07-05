@@ -182,8 +182,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ -f frontend-image.tar ]] && docker load -i frontend-image.tar
-          [[ -f backend-image.tar ]] && docker load -i backend-image.tar
+
+          if [[ -f frontend-image.tar ]]; then
+            echo "Loading frontend image artifact..."
+            docker load -i frontend-image.tar
+          else
+            echo "No frontend image artifact found. Skipping frontend image load."
+          fi
+
+          if [[ -f backend-image.tar ]]; then
+            echo "Loading backend image artifact..."
+            docker load -i backend-image.tar
+          else
+            echo "No backend image artifact found. Skipping backend image load."
+          fi
+
+          echo "Loaded Docker images:"
+          docker images
 
       - name: Test frontend container
         if: needs.resolve.outputs.build_frontend == 'true'
@@ -257,9 +272,26 @@ jobs:
           path: .
 
       - name: Load Docker images
+        shell: bash
         run: |
-          [[ -f frontend-image.tar ]] && docker load -i frontend-image.tar
-          [[ -f backend-image.tar ]] && docker load -i backend-image.tar
+          set -euo pipefail
+
+          if [[ -f frontend-image.tar ]]; then
+            echo "Loading frontend image artifact..."
+            docker load -i frontend-image.tar
+          else
+            echo "No frontend image artifact found. Skipping frontend image load."
+          fi
+
+          if [[ -f backend-image.tar ]]; then
+            echo "Loading backend image artifact..."
+            docker load -i backend-image.tar
+          else
+            echo "No backend image artifact found. Skipping backend image load."
+          fi
+
+          echo "Loaded Docker images:"
+          docker images
 
       - name: Ensure ECR repositories exist
         shell: bash
