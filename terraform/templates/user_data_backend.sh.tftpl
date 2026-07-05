@@ -1,0 +1,26 @@
+#!/bin/bash
+set -euxo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y docker.io awscli
+systemctl enable docker
+systemctl start docker
+
+ACCOUNT_ID=$(echo "${backend_image_uri}" | cut -d'.' -f1)
+REGISTRY="$${ACCOUNT_ID}.dkr.ecr.${aws_region}.amazonaws.com"
+
+aws ecr get-login-password --region "${aws_region}" | docker login --username AWS --password-stdin "$${REGISTRY}"
+
+docker pull "${backend_image_uri}"
+docker rm -f todo-backend || true
+
+docker run -d \
+  --name todo-backend \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  -e DB_HOST='${db_host}' \
+  -e DB_NAME='${db_name}' \
+  -e DB_USER='${db_username}' \
+  -e DB_PASSWORD='${db_password}' \
+  "${backend_image_uri}"

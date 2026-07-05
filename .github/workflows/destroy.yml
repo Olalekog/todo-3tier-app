@@ -1,0 +1,184 @@
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to destroy
+        required: true
+        type: choice
+        options:
+          - dev
+          - uat
+          - prod
+        default: dev
+
+      confirm_destroy:
+        description: Type DESTROY to confirm
+        required: true
+        type: string
+
+      image_tag:
+        description: Legacy image tag
+        required: false
+        default: latest
+
+      frontend_image_tag:
+        description: Frontend image tag
+        required: false
+        default: latest
+
+      backend_image_tag:
+        description: Backend image tag
+        required: false
+        default: latest
+
+  push:
+    branches:
+      - dev
+      - uat
+      - prod
+      - main
+    paths:
+      - ".github/workflows/destroy.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+  BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION }}
+  APP_DIR: .
+
+jobs:
+  register-workflow:
+    name: Register Workflow
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Register only
+        run: |
+          echo "Destroy workflow registered."
+          echo "This push job does not destroy infrastructure."
+          echo "To destroy, run this workflow manually using workflow_dispatch."
+
+  destroy:
+    name: Destroy ${{ github.event.inputs.environment }}
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.environment }}
+      CONFIRM_DESTROY: ${{ github.event.inputs.confirm_destroy }}
+      IMAGE_TAG: ${{ github.event.inputs.image_tag }}
+      FRONTEND_IMAGE_TAG: ${{ github.event.inputs.frontend_image_tag }}
+      BACKEND_IMAGE_TAG: ${{ github.event.inputs.backend_image_tag }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate destroy confirmation and required variables
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Repository: ${GITHUB_REPOSITORY}"
+          echo "Branch/ref: ${GITHUB_REF_NAME}"
+          echo "Environment selected: ${ENVIRONMENT}"
+
+          if [[ "${CONFIRM_DESTROY}" != "DESTROY" ]]; then
+            echo "Destroy confirmation failed."
+            echo "You must type exactly: DESTROY"
+            exit 1
+          fi
+
+          case "${ENVIRONMENT}" in
+            dev|uat|prod) ;;
+            *) echo "Invalid environment: ${ENVIRONMENT}"; exit 1 ;;
+          esac
+
+          REQUIRED_VARS=(
+            "AWS_REGION"
+            "PROJECT_NAME"
+            "BOOTSTRAP_ROLE_ARN"
+            "TF_STATE_BUCKET"
+            "TERRAFORM_VERSION"
+            "DB_PASSWORD"
+          )
+
+          for VAR_NAME in "${REQUIRED_VARS[@]}"; do
+            if [[ -z "${!VAR_NAME}" ]]; then
+              echo "Missing required variable or secret: ${VAR_NAME}"
+              exit 1
+            fi
+          done
+
+          if [[ ! -d "terraform" ]]; then
+            echo "Missing terraform directory. Make sure this workflow is in the flattened repo root."
+            exit 1
+          fi
+
+          if [[ ! -f "terraform/environments/${ENVIRONMENT}.tfvars" ]]; then
+            echo "Missing tfvars file: terraform/environments/${ENVIRONMENT}.tfvars"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsTerraformDestroy
+
+      - name: Confirm AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          STATE_KEY="${PROJECT_NAME}/${ENVIRONMENT}/terraform.tfstate"
+
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Destroy Plan
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform plan -destroy \
+            -var-file="environments/${ENVIRONMENT}.tfvars" \
+            -var="aws_region=${AWS_REGION}" \
+            -var="project_name=${PROJECT_NAME}" \
+            -var="db_password=${DB_PASSWORD}" \
+            -var="image_tag=${IMAGE_TAG}" \
+            -var="frontend_image_tag=${FRONTEND_IMAGE_TAG}" \
+            -var="backend_image_tag=${BACKEND_IMAGE_TAG}" \
+            -out=tf-destroy-plan
+
+      - name: Terraform Destroy Apply
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform apply -auto-approve tf-destroy-plan

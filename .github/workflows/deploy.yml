@@ -1,0 +1,390 @@
+name: Deploy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        required: true
+        type: choice
+        options: [dev, uat, prod]
+        default: dev
+      action:
+        description: Terraform action
+        required: true
+        type: choice
+        options: [plan, apply, destroy]
+        default: destroy
+      workload:
+        description: What changed / what to deploy
+        required: false
+        type: choice
+        options: [all, infra, frontend, backend, app]
+        default: all
+      frontend_image_tag:
+        description: Frontend Docker image tag
+        required: false
+        default: latest
+      backend_image_tag:
+        description: Backend Docker image tag
+        required: false
+        default: latest
+      allow_replacement:
+        description: Allow destructive/replacement changes
+        required: false
+        type: boolean
+        default: false
+
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      action:
+        required: true
+        type: string
+      workload:
+        required: false
+        type: string
+        default: all
+      frontend_image_tag:
+        required: false
+        type: string
+        default: latest
+      backend_image_tag:
+        required: false
+        type: string
+        default: latest
+      allow_replacement:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      DB_PASSWORD:
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+  BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION }}
+  APP_DIR: .
+
+jobs:
+  build:
+    name: Build / Resolve Deploy Inputs
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.resolve.outputs.environment }}
+      action: ${{ steps.resolve.outputs.action }}
+      workload: ${{ steps.resolve.outputs.workload }}
+      frontend_image_tag: ${{ steps.resolve.outputs.frontend_image_tag }}
+      backend_image_tag: ${{ steps.resolve.outputs.backend_image_tag }}
+      tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
+      state_key: ${{ steps.resolve.outputs.state_key }}
+      aws_account_id: ${{ steps.resolve.outputs.aws_account_id }}
+      target_args: ${{ steps.resolve.outputs.target_args }}
+      allow_replacement: ${{ steps.resolve.outputs.allow_replacement }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve deployment inputs
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ENVIRONMENT="${{ inputs.environment || github.event.inputs.environment || 'dev' }}"
+          ACTION="${{ inputs.action || github.event.inputs.action || 'plan' }}"
+          WORKLOAD="${{ inputs.workload || github.event.inputs.workload || 'all' }}"
+          FRONTEND_IMAGE_TAG="${{ inputs.frontend_image_tag || github.event.inputs.frontend_image_tag || 'latest' }}"
+          BACKEND_IMAGE_TAG="${{ inputs.backend_image_tag || github.event.inputs.backend_image_tag || 'latest' }}"
+          ALLOW_REPLACEMENT="${{ inputs.allow_replacement || github.event.inputs.allow_replacement || false }}"
+
+          case "${ENVIRONMENT}" in dev|uat|prod) ;; *) echo "Invalid environment: ${ENVIRONMENT}"; exit 1 ;; esac
+          case "${ACTION}" in plan|apply|destroy) ;; *) echo "Invalid action: ${ACTION}"; exit 1 ;; esac
+          case "${WORKLOAD}" in all|infra|frontend|backend|app) ;; *) echo "Invalid workload: ${WORKLOAD}"; exit 1 ;; esac
+
+          RESOLVED_AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
+          if [[ -z "${RESOLVED_AWS_ACCOUNT_ID}" ]]; then
+            RESOLVED_AWS_ACCOUNT_ID="$(echo "${BOOTSTRAP_ROLE_ARN}" | awk -F: '{print $5}')"
+          fi
+
+          TFVARS_FILE="environments/${ENVIRONMENT}.tfvars"
+          STATE_KEY="${PROJECT_NAME}/${ENVIRONMENT}/terraform.tfstate"
+
+          # Workload targeting rule:
+          # frontend image change => only frontend_compute
+          # backend image change  => only backend_compute
+          # app image change      => frontend_compute + backend_compute
+          # infra/all             => normal full Terraform plan/apply
+          TARGET_ARGS=""
+          if [[ "${WORKLOAD}" == "frontend" ]]; then
+            TARGET_ARGS="-target=module.frontend_compute"
+          elif [[ "${WORKLOAD}" == "backend" ]]; then
+            TARGET_ARGS="-target=module.backend_compute"
+          elif [[ "${WORKLOAD}" == "app" ]]; then
+            TARGET_ARGS="-target=module.frontend_compute -target=module.backend_compute"
+          fi
+
+          echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
+          echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
+          echo "workload=${WORKLOAD}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image_tag=${FRONTEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "backend_image_tag=${BACKEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
+          echo "state_key=${STATE_KEY}" >> "$GITHUB_OUTPUT"
+          echo "aws_account_id=${RESOLVED_AWS_ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
+          echo "target_args=${TARGET_ARGS}" >> "$GITHUB_OUTPUT"
+          echo "allow_replacement=${ALLOW_REPLACEMENT}" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Test / Terraform Validate and Plan
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: ${{ needs.build.outputs.environment }}
+      ACTION: ${{ needs.build.outputs.action }}
+      WORKLOAD: ${{ needs.build.outputs.workload }}
+      TFVARS_FILE: ${{ needs.build.outputs.tfvars_file }}
+      STATE_KEY: ${{ needs.build.outputs.state_key }}
+      FRONTEND_IMAGE_TAG: ${{ needs.build.outputs.frontend_image_tag }}
+      BACKEND_IMAGE_TAG: ${{ needs.build.outputs.backend_image_tag }}
+      TARGET_ARGS: ${{ needs.build.outputs.target_args }}
+      ALLOW_REPLACEMENT: ${{ needs.build.outputs.allow_replacement }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+    outputs:
+      change_count: ${{ steps.inspect.outputs.change_count }}
+      destructive_count: ${{ steps.inspect.outputs.destructive_count }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsTerraformPlan
+
+      - name: Confirm AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        working-directory: terraform
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Import existing ECR repositories if needed
+        if: env.ACTION != 'destroy'
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          FRONTEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
+          BACKEND_REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
+
+          if aws ecr describe-repositories --repository-names "${FRONTEND_REPO}" >/dev/null 2>&1; then
+            terraform state show module.ecr.aws_ecr_repository.frontend >/dev/null 2>&1 || \
+            terraform import \
+              -var-file="${TFVARS_FILE}" \
+              -var="aws_region=${AWS_REGION}" \
+              -var="project_name=${PROJECT_NAME}" \
+              -var="db_password=${DB_PASSWORD}" \
+              -var="frontend_image_tag=${FRONTEND_IMAGE_TAG}" \
+              -var="backend_image_tag=${BACKEND_IMAGE_TAG}" \
+              module.ecr.aws_ecr_repository.frontend "${FRONTEND_REPO}"
+          fi
+
+          if aws ecr describe-repositories --repository-names "${BACKEND_REPO}" >/dev/null 2>&1; then
+            terraform state show module.ecr.aws_ecr_repository.backend >/dev/null 2>&1 || \
+            terraform import \
+              -var-file="${TFVARS_FILE}" \
+              -var="aws_region=${AWS_REGION}" \
+              -var="project_name=${PROJECT_NAME}" \
+              -var="db_password=${DB_PASSWORD}" \
+              -var="frontend_image_tag=${FRONTEND_IMAGE_TAG}" \
+              -var="backend_image_tag=${BACKEND_IMAGE_TAG}" \
+              module.ecr.aws_ecr_repository.backend "${BACKEND_REPO}"
+          fi
+
+      - name: Terraform validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Terraform plan
+        if: env.ACTION != 'destroy'
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform plan \
+            ${TARGET_ARGS} \
+            -var-file="${TFVARS_FILE}" \
+            -var="aws_region=${AWS_REGION}" \
+            -var="project_name=${PROJECT_NAME}" \
+            -var="db_password=${DB_PASSWORD}" \
+            -var="frontend_image_tag=${FRONTEND_IMAGE_TAG}" \
+            -var="backend_image_tag=${BACKEND_IMAGE_TAG}" \
+            -out=tfplan
+
+      - name: Terraform destroy plan
+        if: env.ACTION == 'destroy'
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform plan -destroy \
+            -var-file="${TFVARS_FILE}" \
+            -var="aws_region=${AWS_REGION}" \
+            -var="project_name=${PROJECT_NAME}" \
+            -var="db_password=${DB_PASSWORD}" \
+            -var="frontend_image_tag=${FRONTEND_IMAGE_TAG}" \
+            -var="backend_image_tag=${BACKEND_IMAGE_TAG}" \
+            -out=tfplan
+
+      - name: Inspect Terraform plan
+        id: inspect
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform show -json tfplan > tfplan.json
+          CHANGE_COUNT=$(jq '[.resource_changes[]? | select(.change.actions != ["no-op"])] | length' tfplan.json)
+          DESTRUCTIVE_COUNT=$(jq '[.resource_changes[]? | select((.change.actions | index("delete")) or (.change.actions == ["delete", "create"]) or (.change.actions == ["create", "delete"]))] | length' tfplan.json)
+          echo "Terraform change count: ${CHANGE_COUNT}"
+          echo "Terraform destructive/replacement count: ${DESTRUCTIVE_COUNT}"
+          echo "change_count=${CHANGE_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "destructive_count=${DESTRUCTIVE_COUNT}" >> "$GITHUB_OUTPUT"
+
+          if [[ "${ACTION}" == "apply" && "${DESTRUCTIVE_COUNT}" -gt 0 && "${ALLOW_REPLACEMENT}" != "true" ]]; then
+            echo "Blocking apply to avoid destroying or recreating application infrastructure."
+            echo "Run workflow_dispatch with allow_replacement=true only when intentional."
+            exit 1
+          fi
+
+          if [[ "${ACTION}" == "destroy" && "${ALLOW_REPLACEMENT}" != "true" ]]; then
+            echo "Blocking destroy because allow_replacement is not true."
+            exit 1
+          fi
+
+      - name: Upload Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ needs.build.outputs.environment }}
+          path: terraform/tfplan
+
+  deploy-nonprod:
+    name: Deploy / Apply Non-Prod
+    needs: [build, test]
+    if: needs.build.outputs.action == 'apply' && needs.build.outputs.environment != 'prod' && needs.test.outputs.change_count != '0'
+    runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: ${{ needs.build.outputs.environment }}
+      TFVARS_FILE: ${{ needs.build.outputs.tfvars_file }}
+      STATE_KEY: ${{ needs.build.outputs.state_key }}
+      FRONTEND_IMAGE_TAG: ${{ needs.build.outputs.frontend_image_tag }}
+      BACKEND_IMAGE_TAG: ${{ needs.build.outputs.backend_image_tag }}
+      TARGET_ARGS: ${{ needs.build.outputs.target_args }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsTerraformApplyNonProd
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Download Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ needs.build.outputs.environment }}
+          path: terraform
+
+      - name: Terraform apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+  destroy-nonprod:
+    name: Deploy / Destroy Non-Prod
+    needs: [build, test]
+    if: needs.build.outputs.action == 'destroy' && needs.build.outputs.environment != 'prod' && needs.build.outputs.allow_replacement == 'true'
+    runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: ${{ needs.build.outputs.environment }}
+      STATE_KEY: ${{ needs.build.outputs.state_key }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsTerraformDestroyNonProd
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Download Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ needs.build.outputs.environment }}
+          path: terraform
+
+      - name: Terraform destroy apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
