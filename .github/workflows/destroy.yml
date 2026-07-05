@@ -33,6 +33,13 @@ on:
         required: false
         default: latest
 
+  push:
+    branches:
+      - dev
+      - main
+    paths:
+      - ".github/workflows/destroy.yml"
+
 permissions:
   id-token: write
   contents: read
@@ -47,8 +54,20 @@ env:
   APP_DIR: .
 
 jobs:
+  register-workflow:
+    name: Register Workflow
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Register only
+        run: |
+          echo "Destroy workflow registered."
+          echo "This push job does not destroy infrastructure."
+          echo "To destroy, run this workflow manually using workflow_dispatch."
+
   destroy:
     name: Destroy ${{ github.event.inputs.environment }}
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     env:
@@ -63,10 +82,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate destroy confirmation and variables
+      - name: Validate destroy confirmation and required variables
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "Repository: ${GITHUB_REPOSITORY}"
+          echo "Branch/ref: ${GITHUB_REF_NAME}"
+          echo "Environment selected: ${ENVIRONMENT}"
 
           if [[ "${CONFIRM_DESTROY}" != "DESTROY" ]]; then
             echo "Destroy confirmation failed."
@@ -96,7 +119,7 @@ jobs:
           done
 
           if [[ ! -d "terraform" ]]; then
-            echo "Missing terraform directory. Make sure this is the flattened repo structure."
+            echo "Missing terraform directory. Make sure this workflow is in the flattened repo root."
             exit 1
           fi
 
