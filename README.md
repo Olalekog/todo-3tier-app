@@ -16,7 +16,6 @@ The infrastructure is provisioned with Terraform, Docker images are stored in Am
 
 ---
 
----
 
 ## AWS Solution Diagram
 
@@ -70,26 +69,6 @@ Example for dev:
 ```
 
 
-## Current Project Name
-
-```text
-react-js-application
-```
-
-The ECR repositories use this naming pattern:
-
-```text
-react-js-application/<environment>/todo-frontend
-react-js-application/<environment>/todo-backend
-```
-
-Example for dev:
-
-```text
-866934333672.dkr.ecr.us-east-1.amazonaws.com/react-js-application/dev/todo-frontend:latest
-866934333672.dkr.ecr.us-east-1.amazonaws.com/react-js-application/dev/todo-backend:latest
-```
-
 ---
 
 ## Repository Structure
@@ -126,6 +105,8 @@ repo-root/
 │   └── templates/
 │       ├── user_data_frontend.sh.tftpl
 │       └── user_data_backend.sh.tftpl
+├── assets/
+│   └── aws_3_tier_to_do_app_architecture.png
 ├── README.md
 └── .gitignore
 ```
@@ -898,3 +879,567 @@ Open the frontend in your browser:
 ```text
 http://<frontend_public_ip>
 ```
+
+---
+
+# Supplemental Project Notes
+
+## Excluded by Design
+
+This simplified version does **not** use:
+
+- ALB
+- ASG
+- Route 53
+- ACM
+- Cognito
+- Application-created KMS key
+- DynamoDB state locking
+
+---
+
+## Diagram Flow Overview
+
+This repository includes three diagram assets in the `assets/` folder. These diagrams are referenced directly in this README and can also be opened separately from GitHub.
+
+| Diagram | File | What It Shows |
+|---|---|---|
+| Architecture diagram | `assets/architecture-diagram.svg` | AWS 3-tier layout with public frontend EC2, private backend EC2, private RDS, ECR, S3 state, and GitHub Actions |
+| Deployment flow | `assets/deployment-flow.svg` | CI/CD path from GitHub push through dev validate, build, test, and deploy |
+| Request flow | `assets/request-flow.svg` | Browser request path through frontend Nginx proxy, FastAPI backend, and RDS MySQL |
+| Promotion flow | `assets/promotion-flow.svg` | Branch promotion guard: only `dev → uat`, then `uat → prod` with production approval gate |
+
+### Architecture Diagram Flow
+
+```text
+GitHub Actions
+  -> Assumes AWS OIDC IAM role
+  -> Builds Docker images
+  -> Pushes images to Amazon ECR
+  -> Runs Terraform using S3 remote state
+  -> Creates VPC, subnets, security groups, EC2, ECR, and RDS
+
+User Browser
+  -> Public Frontend EC2 :80
+  -> React app served by Nginx
+  -> /api traffic proxied to private Backend EC2 :8000
+  -> FastAPI reads/writes To-Do data
+  -> RDS MySQL :3306
+```
+
+![Architecture Diagram](assets/architecture-diagram.svg)
+
+### Deployment Pipeline Flow
+
+```text
+Developer pushes to dev branch
+  -> GitHub Actions starts
+  -> Dev Validate
+      -> Check required variables
+      -> Configure AWS OIDC credentials
+      -> Terraform fmt/init/validate
+  -> Dev Build
+      -> Ensure ECR repositories exist
+      -> Build frontend Docker image
+      -> Build backend Docker image
+      -> Push latest and Git SHA image tags
+  -> Dev Test
+      -> Login to ECR again because this is a new runner
+      -> Pull pushed images
+      -> Run frontend container locally
+      -> Run temporary MySQL test container
+      -> Run backend container locally
+      -> Test frontend and backend health endpoints
+  -> Dev Deploy
+      -> Terraform plan/apply
+      -> EC2 instances pull Docker images
+      -> Backend initializes database
+      -> Frontend serves the To-Do UI
+```
+
+![Deployment Flow](assets/deployment-flow.svg)
+
+### Application Request Flow
+
+```text
+1. User opens http://<frontend-public-ip>
+2. Frontend EC2 receives HTTP request on port 80
+3. Nginx serves React static files
+4. React calls /api/todos
+5. Nginx proxies /api traffic to backend private IP on port 8000
+6. FastAPI handles the request
+7. FastAPI connects to RDS MySQL on port 3306
+8. RDS returns To-Do data
+9. FastAPI returns JSON response
+10. React updates the browser UI
+```
+
+![Request Flow](assets/request-flow.svg)
+
+
+### Environment Promotion Flow
+
+The workflow enforces controlled promotion between environments. Pull requests are allowed only in this order:
+
+```text
+dev branch
+  -> Pull request into uat
+  -> Merge to uat deploys the UAT environment
+  -> Pull request from uat into prod
+  -> Merge to prod waits for GitHub Environment approval
+  -> Approved prod deployment runs Terraform with prod.tfvars
+```
+
+Invalid promotion paths are blocked by the `validate-promotion-path` job. Examples of blocked paths:
+
+```text
+feature -> uat
+feature -> prod
+dev -> prod
+prod -> uat
+```
+
+![Promotion Flow](assets/promotion-flow.svg)
+
+---
+
+## Environment Promotion Rules
+
+The pipeline supports three environments with separate tfvars files:
+
+| Branch | Terraform tfvars file | Deployment behavior | Approval requirement |
+|---|---|---|---|
+| `dev` | `terraform/environments/dev.tfvars` | Push to `dev` builds, tests, and deploys dev | No approval by default |
+| `uat` | `terraform/environments/uat.tfvars` | Only PRs from `dev` are allowed; merge deploys UAT | Optional GitHub Environment approval |
+| `prod` | `terraform/environments/prod.tfvars` | Only PRs from `uat` are allowed; merge waits for production approval | Required GitHub Environment approval |
+
+### Pull request promotion guard
+
+The workflow has a `validate-promotion-path` job that runs on pull requests into `uat` and `prod`. It allows only:
+
+```text
+dev -> uat
+uat -> prod
+```
+
+Any other pull request path fails immediately before Terraform validation or deployment.
+
+### Production approval gate
+
+The deploy job uses:
+
+```yaml
+environment: ${{ needs.set-environment.outputs.environment }}
+```
+
+To enforce approval for production, create a GitHub Environment named exactly:
+
+```text
+prod
+```
+
+Then configure:
+
+```text
+Repository Settings
+  -> Environments
+  -> prod
+  -> Required reviewers
+```
+
+When code is merged from `uat` into `prod`, GitHub Actions pauses the `Deploy Infrastructure` job until an approved reviewer approves the `prod` environment deployment.
+
+---
+
+## Required AWS Permissions for Deployment
+
+The GitHub Actions role needs permissions for:
+
+```text
+ECR repository creation and Docker image push
+EC2/VPC networking and instance deployment
+IAM EC2 instance role and instance profile creation
+RDS MySQL deployment
+S3 Terraform state read/write
+```
+
+A full IAM policy example is included here:
+
+```text
+docs/github-actions-iam-policy.json
+```
+
+During troubleshooting, full EC2 permission may be temporarily attached:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "ec2:*",
+  "Resource": "*"
+}
+```
+
+After deployment succeeds, replace broad permissions with scoped least-privilege permissions.
+
+---
+
+## Docker Image Build
+
+### Frontend Dockerfile
+
+The frontend container builds the React app and serves it through Nginx.
+
+```text
+frontend/Dockerfile
+```
+
+Nginx also proxies API traffic:
+
+```text
+/api -> backend private IP:8000
+```
+
+### Backend Dockerfile
+
+The backend container runs FastAPI with Uvicorn.
+
+```text
+backend/Dockerfile
+```
+
+FastAPI connects to RDS using environment variables passed from EC2 user data.
+
+---
+
+## Database Initialization
+
+On backend startup, FastAPI automatically:
+
+```text
+Creates the todos table if it does not exist
+Inserts one test To-Do item if not already present
+Starts the API service
+```
+
+Default seed item:
+
+```text
+Test To-Do item created during application initialization
+```
+
+Useful API endpoints:
+
+```text
+GET  /health
+GET  /api/todos
+POST /api/todos
+POST /api/seed
+```
+
+---
+
+## Test the Application
+
+After Terraform apply completes, get the frontend public IP from Terraform outputs or EC2 console.
+
+Open in a browser:
+
+```text
+http://<frontend-public-ip>
+```
+
+Test API through the frontend proxy:
+
+```bash
+curl http://<frontend-public-ip>/api/todos
+```
+
+Create another seeded test item:
+
+```bash
+curl -X POST http://<frontend-public-ip>/api/seed
+```
+
+Check health:
+
+```bash
+curl http://<frontend-public-ip>/api/health
+```
+
+Depending on the Nginx proxy configuration, health may also be available as:
+
+```bash
+curl http://<frontend-public-ip>/api/health
+```
+
+---
+
+## Connect to the Database
+
+RDS is private, so connect from the backend EC2 instance or through a tunnel.
+
+From backend EC2:
+
+```bash
+sudo apt update
+sudo apt install -y mysql-client
+mysql -h <rds-endpoint> -P 3306 -u todo_admin -p
+```
+
+With SSL CA bundle:
+
+```bash
+sudo mkdir -p /certs
+sudo curl -o /certs/global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+mysql -h <rds-endpoint> \
+  -P 3306 \
+  --ssl-mode=VERIFY_IDENTITY \
+  --ssl-ca=/certs/global-bundle.pem \
+  -u todo_admin \
+  -p
+```
+
+Then run:
+
+```sql
+USE todoapp;
+SHOW TABLES;
+SELECT * FROM todos;
+```
+
+---
+
+## Operational Notes
+
+- The backend EC2 is private and pulls Docker images from ECR through the NAT Gateway.
+- The frontend EC2 is public and serves traffic on port 80.
+- RDS is private and only accepts MySQL traffic from the backend security group.
+- There is no load balancer, so the application endpoint is the frontend EC2 public IP.
+- There is no autoscaling, so each layer uses one instance.
+- There is no Route 53/ACM, so the frontend uses plain HTTP for this lab version.
+
+---
+
+## Environment-specific Terraform tfvars files
+
+### Environment tfvars flow diagram
+
+![Environment tfvars flow](assets/environment-tfvars-flow.svg)
+
+
+This project now supports separate Terraform variable files per environment. Each environment has its own VPC CIDR, subnet CIDRs, instance sizing, database sizing, and tags. The deployment workflow automatically selects the correct file based on the branch or manual workflow input.
+
+```text
+terraform/
+├── environments/
+│   ├── dev.tfvars
+│   ├── uat.tfvars
+│   └── prod.tfvars
+├── main.tf
+├── variables.tf
+├── outputs.tf
+├── versions.tf
+├── modules/
+│   ├── network/
+│   ├── security-groups/
+│   ├── ecr/
+│   ├── compute/
+│   └── database/
+└── templates/
+    ├── user_data_frontend.sh.tftpl
+    └── user_data_backend.sh.tftpl
+```
+
+### Environment branch mapping
+
+```text
+dev branch  -> terraform/environments/dev.tfvars  -> dev environment
+uat branch  -> terraform/environments/uat.tfvars  -> uat environment
+prod branch -> terraform/environments/prod.tfvars -> prod environment
+```
+
+### Remote state path per environment
+
+The GitHub Actions workflow uses one S3 bucket, but stores each environment in a separate state key:
+
+```text
+s3://react-js-application-terraform-state-866934333672/react-js-application/dev/terraform.tfstate
+s3://react-js-application-terraform-state-866934333672/react-js-application/uat/terraform.tfstate
+s3://react-js-application-terraform-state-866934333672/react-js-application/prod/terraform.tfstate
+```
+
+### What belongs in each tfvars file
+
+Each `.tfvars` file contains non-sensitive environment configuration:
+
+```hcl
+aws_region   = "us-east-1"
+project_name = "react-js-application"
+environment  = "dev"
+
+vpc_cidr                 = "10.40.0.0/16"
+public_subnet_cidrs      = ["10.40.1.0/24", "10.40.2.0/24"]
+private_app_subnet_cidrs = ["10.40.11.0/24", "10.40.12.0/24"]
+private_db_subnet_cidrs  = ["10.40.21.0/24", "10.40.22.0/24"]
+
+instance_type        = "t3.micro"
+db_instance_class    = "db.t3.micro"
+db_allocated_storage = 20
+```
+
+Do not store database passwords in `.tfvars`. The workflow passes the database password securely from the GitHub secret:
+
+```text
+DB_PASSWORD
+```
+
+### Manual deployment by environment
+
+Use **Actions → Docker Build Test Push / Deploy Infrastructure → Run workflow**, then choose:
+
+```text
+environment: dev | uat | prod
+terraform_action: plan | apply | destroy
+```
+
+### CI/CD flow with environment tfvars
+
+```text
+GitHub branch or manual input
+        |
+        v
+Resolve environment
+        |
+        v
+Select terraform/environments/<env>.tfvars
+        |
+        v
+Terraform init with S3 backend key: react-js-application/<env>/terraform.tfstate
+        |
+        v
+Terraform validate and plan
+        |
+        v
+Build Docker images
+        |
+        v
+Push images to ECR path: react-js-application/<env>/...
+        |
+        v
+Test containers
+        |
+        v
+Terraform apply using the selected tfvars file
+```
+
+---
+
+---
+
+## Fix: required environment tfvars files
+
+The deploy workflow validates that the environment-specific tfvars file exists before running Terraform:
+
+```text
+terraform/environments/dev.tfvars
+terraform/environments/uat.tfvars
+terraform/environments/prod.tfvars
+```
+
+The selected file is based on branch or manual workflow input:
+
+```text
+dev branch  -> terraform/environments/dev.tfvars
+uat branch  -> terraform/environments/uat.tfvars
+prod branch -> terraform/environments/prod.tfvars
+```
+
+Do not place these files under `.github/workflows` or another folder. They must stay under `terraform/environments/` because the deploy workflow runs Terraform from the `terraform` directory and passes:
+
+```bash
+-var-file="environments/${ENVIRONMENT}.tfvars"
+```
+
+---
+
+## Repository Folder Layout Update
+
+This project is designed to live inside a repository repository root. The GitHub workflows remain at the repository root under `.github/workflows`, while application and Terraform code live at the repository root.
+
+```text
+repo-root/
+├── .github/
+│   └── workflows/
+│       ├── docker-build-push.yml
+│       └── deploy.yml
+├── frontend/
+├── backend/
+├── terraform/
+    │   ├── environments/
+    │   │   ├── dev.tfvars
+    │   │   ├── uat.tfvars
+    │   │   └── prod.tfvars
+    │   ├── modules/
+    │   │   ├── network/
+    │   │   ├── security-groups/
+    │   │   ├── ecr/
+    │   │   ├── compute/
+    │   │   └── database/
+    │   ├── templates/
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   ├── outputs.tf
+    │   └── versions.tf
+├── assets/
+└── docs/
+```
+
+### Workflow path configuration
+
+Both workflows now use:
+
+```yaml
+env:
+  APP_DIR: .
+```
+
+Terraform commands run from:
+
+```text
+terraform
+```
+
+The environment tfvars files are resolved as:
+
+```text
+terraform/environments/dev.tfvars
+terraform/environments/uat.tfvars
+terraform/environments/prod.tfvars
+```
+
+Docker build contexts are:
+
+```text
+frontend
+backend
+```
+
+---
+
+## Separate Frontend and Backend Instance Types
+
+The frontend and backend EC2 workloads can now use different instance sizes. Configure them per environment in `terraform/environments/<env>.tfvars`:
+
+```hcl
+frontend_instance_type = "t3.micro"
+backend_instance_type  = "t3.small"
+```
+
+Terraform passes these into the compute module separately:
+
+```hcl
+frontend_instance_type = var.frontend_instance_type
+backend_instance_type  = var.backend_instance_type
+```
+
+This lets you scale the FastAPI backend independently from the React frontend without changing both instances at the same time.
