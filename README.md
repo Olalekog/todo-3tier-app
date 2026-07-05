@@ -69,6 +69,27 @@ Example for dev:
 866934333672.dkr.ecr.us-east-1.amazonaws.com/react-js-application/dev/todo-backend:latest
 ```
 
+
+## Current Project Name
+
+```text
+react-js-application
+```
+
+The ECR repositories use this naming pattern:
+
+```text
+react-js-application/<environment>/todo-frontend
+react-js-application/<environment>/todo-backend
+```
+
+Example for dev:
+
+```text
+866934333672.dkr.ecr.us-east-1.amazonaws.com/react-js-application/dev/todo-frontend:latest
+866934333672.dkr.ecr.us-east-1.amazonaws.com/react-js-application/dev/todo-backend:latest
+```
+
 ---
 
 ## Repository Structure
