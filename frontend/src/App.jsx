@@ -15,7 +15,7 @@ function App() {
     setError('');
     try {
       const res = await fetch(`${API_BASE}/todos`);
-      if (!res.ok) throw new Error('Failed to load todos');
+      if (!res.ok) throw new Error('Failed to load todo applications');
       setTodos(await res.json());
     } catch (err) {
       setError(err.message);
@@ -34,7 +34,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title })
       });
-      if (!res.ok) throw new Error('Failed to add todo');
+      if (!res.ok) throw new Error('Failed to add todo applications');
       setTitle('');
       await loadTodos();
     } catch (err) {
@@ -50,7 +50,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ completed: !todo.completed })
       });
-      if (!res.ok) throw new Error('Failed to update todo');
+      if (!res.ok) throw new Error('Failed to update todo applications');
       await loadTodos();
     } catch (err) {
       setError(err.message);
@@ -61,7 +61,7 @@ function App() {
     setError('');
     try {
       const res = await fetch(`${API_BASE}/todos/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Failed to delete todo');
+      if (!res.ok) throw new Error('Failed to delete todo applications');
       await loadTodos();
     } catch (err) {
       setError(err.message);
