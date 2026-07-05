@@ -16,6 +16,39 @@ The infrastructure is provisioned with Terraform, Docker images are stored in Am
 
 ---
 
+---
+
+## AWS Solution Diagram
+
+The diagram below shows the end-to-end AWS solution architecture for the 3-tier To-Do application, including the public frontend tier, private backend tier, private RDS database tier, Amazon ECR image registry, S3 Terraform state backend, GitHub Actions, OIDC IAM role, and Terraform provisioning flow.
+
+![AWS Solution Diagram – 3-Tier To-Do Application](assets/aws_3_tier_to_do_app_architecture.png)
+
+### Diagram Summary
+
+```text
+User Browser
+    ↓ HTTP/HTTPS
+Internet Gateway
+    ↓
+Frontend EC2 in Public Subnet
+    ↓ API :8000
+Backend EC2 in Private App Subnet
+    ↓ MySQL :3306
+RDS MySQL in Private DB Subnet
+```
+
+Supporting services:
+
+```text
+GitHub Actions → OIDC IAM Role → Terraform → AWS Resources
+Terraform remote state → S3 Bucket
+Docker images → Amazon ECR
+Frontend EC2 pulls frontend image from ECR
+Backend EC2 pulls backend image from ECR
+```
+
+
 ## Current Project Name
 
 ```text

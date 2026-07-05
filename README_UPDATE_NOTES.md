@@ -1,19 +1,16 @@
-# README Architecture Update
+# README Update Notes
 
-This package contains an updated detailed README.md for the React JS Application 3-tier AWS project.
+This package includes the updated README and AWS solution diagram asset.
 
-It includes:
+Copy these into your repository root:
 
-- Project overview
-- Repository structure
-- AWS services architecture
-- Mermaid architecture diagrams
-- AWS network diagram
-- Request flow diagram
-- CI/CD flow diagram
-- Docker build/test/push flow
-- Terraform module flow
-- Destroy workflow flow
-- Troubleshooting steps
-- ECR validation commands
-- Manual container recovery commands
+```text
+README.md
+assets/aws_3_tier_to_do_app_architecture.png
+```
+
+The README references the image using:
+
+```markdown
+![AWS Solution Diagram – 3-Tier To-Do Application](assets/aws_3_tier_to_do_app_architecture.png)
+```
