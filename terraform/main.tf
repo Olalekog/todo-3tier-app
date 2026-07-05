@@ -26,8 +26,8 @@ locals {
     ManagedBy   = "Terraform"
   })
 
-  frontend_image_uri = "${module.ecr.frontend_repository_url}:${var.image_tag}"
-  backend_image_uri  = "${module.ecr.backend_repository_url}:${var.image_tag}"
+  frontend_image_uri = "${module.ecr.frontend_repository_url}:${var.frontend_image_tag}"
+  backend_image_uri  = "${module.ecr.backend_repository_url}:${var.backend_image_tag}"
 }
 
 module "network" {
