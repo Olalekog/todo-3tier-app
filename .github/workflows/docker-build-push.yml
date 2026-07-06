@@ -378,6 +378,8 @@ jobs:
           exit 1
 
   push:
+    branches:
+      - dev
     name: Push Images
     needs:
       - resolve

@@ -152,8 +152,8 @@ jobs:
 
           ENVIRONMENT="${{ inputs.environment || github.event.inputs.environment || 'uat' }}"
 
-          if [[ "${{ github.event_name }}" == "push" && "${GITHUB_REF_NAME}" != "uat" ]]; then
-            echo "Push-based deploy is restricted to the uat branch only."
+          if [[ "${{ github.event_name }}" == "push" && "${GITHUB_REF_NAME}" != "dev" ]]; then
+            echo "Push-based deploy is restricted to the dev branch only."
             echo "Current branch: ${GITHUB_REF_NAME}"
             exit 1
           fi
