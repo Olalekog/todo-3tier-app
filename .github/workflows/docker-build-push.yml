@@ -480,7 +480,7 @@ jobs:
     needs:
       - resolve
       - push
-    if: needs.resolve.outputs.environment == 'dev' && (needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true')
+    if: always() && needs.resolve.result == 'success' && needs.resolve.outputs.environment == 'dev' && (needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true')
     uses: ./.github/workflows/deploy.yml
     with:
       environment: dev
@@ -495,7 +495,7 @@ jobs:
     name: Deploy Dev Infrastructure Only
     needs:
       - resolve
-    if: needs.resolve.outputs.environment == 'dev' && needs.resolve.outputs.workload == 'infra'
+    if: always() && needs.resolve.result == 'success' && needs.resolve.outputs.environment == 'dev' && needs.resolve.outputs.workload == 'infra'
     uses: ./.github/workflows/deploy.yml
     with:
       environment: dev

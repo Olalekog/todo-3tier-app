@@ -158,7 +158,7 @@ jobs:
             exit 1
           fi
 
-          ACTION="${{ inputs.action || github.event.inputs.action || 'plan' }}"
+          ACTION="${{ inputs.action || inputs.action || github.event.inputs.action || 'plan' }}"
           WORKLOAD="${{ inputs.workload || github.event.inputs.workload || 'all' }}"
           FRONTEND_IMAGE_TAG="${{ inputs.frontend_image_tag || github.event.inputs.frontend_image_tag || 'latest' }}"
           BACKEND_IMAGE_TAG="${{ inputs.backend_image_tag || github.event.inputs.backend_image_tag || 'latest' }}"
