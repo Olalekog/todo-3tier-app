@@ -1,70 +1,33 @@
 name: Deploy Infrastructure
 
 on:
-  pull_request:
-    branches:
-      - uat
-      - prod
-    types:
-      - opened
-      - synchronize
-      - reopened
-      - ready_for_review
-  workflow_dispatch:
+  workflow_call:
     inputs:
       environment:
         description: Environment to deploy
         required: true
-        type: choice
-        options: [dev, uat, prod]
-        default: dev
+        type: string
       action:
         description: Terraform action
         required: true
-        type: choice
-        options: [plan, apply]
-        default: apply
-      workload:
-        description: What changed / what to deploy
-        required: false
-        type: choice
-        options: [all, infra, frontend, backend, app]
-        default: all
-      frontend_image_tag:
-        description: Frontend Docker image tag
-        required: false
-        default: latest
-      backend_image_tag:
-        description: Backend Docker image tag
-        required: false
-        default: latest
-      allow_replacement:
-        description: Allow destructive/replacement changes
-        required: false
-        type: boolean
-        default: false
-
-  workflow_call:
-    inputs:
-      environment:
-        required: true
-        type: string
-      action:
-        required: true
         type: string
       workload:
+        description: Workload scope
         required: false
         type: string
-        default: all
+        default: infra
       frontend_image_tag:
+        description: Frontend image tag
         required: false
         type: string
         default: latest
       backend_image_tag:
+        description: Backend image tag
         required: false
         type: string
         default: latest
       allow_replacement:
+        description: Allow Terraform replacement/destructive changes
         required: false
         type: boolean
         default: false
@@ -72,10 +35,54 @@ on:
       DB_PASSWORD:
         required: true
 
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        required: true
+        type: choice
+        options:
+          - dev
+          - uat
+          - prod
+        default: dev
+      action:
+        description: Terraform action
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+        default: plan
+      workload:
+        description: Workload scope
+        required: true
+        type: choice
+        options:
+          - infra
+          - frontend
+          - backend
+          - app
+        default: infra
+      frontend_image_tag:
+        description: Frontend image tag
+        required: false
+        type: string
+        default: latest
+      backend_image_tag:
+        description: Backend image tag
+        required: false
+        type: string
+        default: latest
+      allow_replacement:
+        description: Allow Terraform replacement/destructive changes
+        required: false
+        type: boolean
+        default: false
+
 permissions:
   id-token: write
   contents: read
-  pull-requests: read
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
@@ -83,13 +90,272 @@ env:
   PROJECT_NAME: ${{ vars.PROJECT_NAME }}
   BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
   TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-  TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION }}
+  TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION || '1.9.0' }}
   APP_DIR: .
 
 jobs:
-
-  validate-promotion-path:
-    name: Validate PR Promotion Path
+  resolve:
+    name: Resolve Deploy Inputs
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    outputs:
+      environment: ${{ steps.resolve.outputs.environment }}
+      action: ${{ steps.resolve.outputs.action }}
+      workload: ${{ steps.resolve.outputs.workload }}
+      tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
+      state_key: ${{ steps.resolve.outputs.state_key }}
+      frontend_image_tag: ${{ steps.resolve.outputs.frontend_image_tag }}
+      backend_image_tag: ${{ steps.resolve.outputs.backend_image_tag }}
+      target_args: ${{ steps.resolve.outputs.target_args }}
+      allow_replacement: ${{ steps.resolve.outputs.allow_replacement }}
+
     steps:
+      - name: Resolve inputs
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ENVIRONMENT="${{ inputs.environment || github.event.inputs.environment || 'dev' }}"
+          ACTION="${{ inputs.action || github.event.inputs.action || 'plan' }}"
+          WORKLOAD="${{ inputs.workload || github.event.inputs.workload || 'infra' }}"
+          FRONTEND_IMAGE_TAG="${{ inputs.frontend_image_tag || github.event.inputs.frontend_image_tag || 'latest' }}"
+          BACKEND_IMAGE_TAG="${{ inputs.backend_image_tag || github.event.inputs.backend_image_tag || 'latest' }}"
+          ALLOW_REPLACEMENT="${{ inputs.allow_replacement || github.event.inputs.allow_replacement || false }}"
+
+          case "${ENVIRONMENT}" in
+            dev|uat|prod) ;;
+            *)
+              echo "Invalid environment: ${ENVIRONMENT}"
+              exit 1
+              ;;
+          esac
+
+          case "${ACTION}" in
+            plan|apply) ;;
+            *)
+              echo "Invalid action: ${ACTION}"
+              echo "Allowed actions: plan, apply"
+              exit 1
+              ;;
+          esac
+
+          case "${WORKLOAD}" in
+            infra|frontend|backend|app|all) ;;
+            *)
+              echo "Invalid workload: ${WORKLOAD}"
+              exit 1
+              ;;
+          esac
+
+          TFVARS_FILE="environments/${ENVIRONMENT}.tfvars"
+          STATE_KEY="${PROJECT_NAME}/${ENVIRONMENT}/terraform.tfstate"
+
+          TARGET_ARGS=""
+          if [[ "${WORKLOAD}" == "frontend" ]]; then
+            TARGET_ARGS="-target=module.frontend_compute"
+          elif [[ "${WORKLOAD}" == "backend" ]]; then
+            TARGET_ARGS="-target=module.backend_compute"
+          fi
+
+          echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
+          echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
+          echo "workload=${WORKLOAD}" >> "$GITHUB_OUTPUT"
+          echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
+          echo "state_key=${STATE_KEY}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image_tag=${FRONTEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "backend_image_tag=${BACKEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "target_args=${TARGET_ARGS}" >> "$GITHUB_OUTPUT"
+          echo "allow_replacement=${ALLOW_REPLACEMENT}" >> "$GITHUB_OUTPUT"
+
+  plan:
+    name: Terraform Validate and Plan
+    needs:
+      - resolve
+    runs-on: ubuntu-latest
+    outputs:
+      change_count: ${{ steps.plan_json.outputs.change_count }}
+    env:
+      ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+      TFVARS_FILE: ${{ needs.resolve.outputs.tfvars_file }}
+      STATE_KEY: ${{ needs.resolve.outputs.state_key }}
+      FRONTEND_IMAGE_TAG: ${{ needs.resolve.outputs.frontend_image_tag }}
+      BACKEND_IMAGE_TAG: ${{ needs.resolve.outputs.backend_image_tag }}
+      TARGET_ARGS: ${{ needs.resolve.outputs.target_args }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsTerraformPlan
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform fmt, init, and validate
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f "${TFVARS_FILE}" ]]; then
+            echo "Missing tfvars file: terraform/${TFVARS_FILE}"
+            exit 1
+          fi
+
+          terraform fmt -check -recursive
+
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+          terraform validate
+
+      - name: Terraform plan
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform plan \
+            -var-file="${TFVARS_FILE}" \
+            -var="aws_region=${AWS_REGION}" \
+            -var="project_name=${PROJECT_NAME}" \
+            -var="db_password=${DB_PASSWORD}" \
+            -var="frontend_image_tag=${FRONTEND_IMAGE_TAG}" \
+            -var="backend_image_tag=${BACKEND_IMAGE_TAG}" \
+            ${TARGET_ARGS} \
+            -out=tfplan
+
+      - name: Inspect plan JSON
+        id: plan_json
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform show -json tfplan > tfplan.json
+          CHANGE_COUNT="$(jq '[.resource_changes[]? | select(.change.actions != ["no-op"])] | length' tfplan.json)"
+          echo "change_count=${CHANGE_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "Terraform change count: ${CHANGE_COUNT}"
+
+      - name: Upload Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ needs.resolve.outputs.environment }}
+          path: |
+            terraform/tfplan
+            terraform/tfplan.json
+          if-no-files-found: error
+
+  apply-nonprod:
+    name: Terraform Apply Non-Prod
+    needs:
+      - resolve
+      - plan
+    if: needs.resolve.outputs.action == 'apply' && needs.resolve.outputs.environment != 'prod'
+    runs-on: ubuntu-latest
+    env:
+      STATE_KEY: ${{ needs.resolve.outputs.state_key }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsTerraformApply
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Download Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ needs.resolve.outputs.environment }}
+          path: terraform
+
+      - name: Terraform apply
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform apply -auto-approve tfplan
+
+  apply-prod:
+    name: Terraform Apply Prod
+    needs:
+      - resolve
+      - plan
+    if: needs.resolve.outputs.action == 'apply' && needs.resolve.outputs.environment == 'prod'
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      STATE_KEY: ${{ needs.resolve.outputs.state_key }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsTerraformApplyProd
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Download Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ needs.resolve.outputs.environment }}
+          path: terraform
+
+      - name: Terraform apply
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform apply -auto-approve tfplan
