@@ -17,7 +17,7 @@ on:
         required: true
         type: choice
         options: [dev, uat, prod]
-        default: uat
+        default: dev
       action:
         description: Terraform action
         required: true
@@ -97,6 +97,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ "${{ github.event_name }}" == "push" && "${GITHUB_REF_NAME}" != "dev" ]]; then
+            echo "Push-based deploy is restricted to the dev branch only."
+            echo "Current branch: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
 
           BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
           HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"

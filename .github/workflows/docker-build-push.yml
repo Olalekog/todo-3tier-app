@@ -11,7 +11,7 @@ on:
       - reopened
       - ready_for_review
   push:
-    branches: [uat]
+    branches: [dev]
     paths:
       - "frontend/**"
       - "backend/**"
@@ -25,7 +25,7 @@ on:
         required: true
         type: choice
         options: [dev, uat, prod]
-        default: uat
+        default: dev
       workload:
         description: Workload to build
         required: true
@@ -85,18 +85,16 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     steps:
-      - name: Enforce uat-only push trigger
+      - name: Enforce dev-only push trigger
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF_NAME}" != "uat" ]]; then
-            echo "Push-based workflow execution is restricted to the uat branch only."
+          if [[ "${GITHUB_REF_NAME}" != "dev" ]]; then
+            echo "Push-based workflow execution is restricted to the dev branch only."
             echo "Current branch: ${GITHUB_REF_NAME}"
             exit 1
           fi
           echo "Push branch allowed: ${GITHUB_REF_NAME}"
-
-
   pr-validation-complete:
     name: PR Validation Complete
     runs-on: ubuntu-latest
@@ -407,6 +405,7 @@ jobs:
           exit 1
 
   push:
+    branches: [dev]
     name: Push Images
     needs: [resolve, test]
     if: needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true'
