@@ -17,7 +17,8 @@ key_name = ""
 frontend_instance_type = "t3.micro"
 backend_instance_type  = "t3.small"
 
-image_tag = "latest"
+frontend_image_tag = "latest"
+backend_image_tag  = "latest"
 
 db_name              = "todoapp"
 db_username          = "todo_admin"

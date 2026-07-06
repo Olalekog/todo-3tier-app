@@ -59,10 +59,16 @@ variable "key_name" {
   default     = ""
 }
 
-variable "allowed_http_cidr_blocks" {
-  description = "CIDR blocks allowed to access frontend HTTP."
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
+variable "allowed_http_cidr" {
+  description = "CIDR block allowed to access frontend HTTP."
+  type        = string
+  default     = "0.0.0.0/0"
+}
+
+variable "allowed_ssh_cidr" {
+  description = "CIDR block allowed to access EC2 instances over SSH."
+  type        = string
+  default     = "0.0.0.0/0"
 }
 
 variable "backend_allowed_cidr_blocks" {

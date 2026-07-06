@@ -62,7 +62,8 @@ module "security_groups" {
   project_name                = var.project_name
   environment                 = var.environment
   vpc_id                      = module.network.vpc_id
-  allowed_http_cidr_blocks    = var.allowed_http_cidr_blocks
+  allowed_http_cidr           = var.allowed_http_cidr
+  allowed_ssh_cidr            = var.allowed_ssh_cidr
   backend_allowed_cidr_blocks = length(var.backend_allowed_cidr_blocks) > 0 ? var.backend_allowed_cidr_blocks : var.private_app_subnet_cidrs
   tags                        = local.common_tags
 }
@@ -72,12 +73,12 @@ module "database" {
 
   project_name         = var.project_name
   environment          = var.environment
-  db_subnet_ids        = module.network.private_db_subnet_ids
+  private_db_subnet_ids = module.network.private_db_subnet_ids
   db_security_group_id = module.security_groups.database_security_group_id
   db_name              = var.db_name
   db_username          = var.db_username
   db_password          = var.db_password
-  instance_class       = var.db_instance_class
+  db_instance_class    = var.db_instance_class
   allocated_storage    = var.db_allocated_storage
   tags                 = local.common_tags
 }
