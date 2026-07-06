@@ -23,7 +23,7 @@ on:
         required: true
         type: choice
         options: [plan, apply, destroy]
-        default: plan
+        default: apply
       workload:
         description: What changed / what to deploy
         required: false
