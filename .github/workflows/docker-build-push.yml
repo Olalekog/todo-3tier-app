@@ -99,6 +99,7 @@ jobs:
       - name: Stop after PR promotion validation
         run: |
           echo "PR validation only."
+          echo "Pull requests are only allowed from dev -> uat and uat -> prod."
           echo "Docker build/push and Terraform deploy run from allowed branch push or manual dispatch only."
 
   push-branch-guard:
@@ -113,6 +114,7 @@ jobs:
 
           if [[ "${GITHUB_REF_NAME}" != "dev" ]]; then
             echo "Push-based workflow execution is restricted to the dev branch only."
+            echo "Pushes to uat and prod are not allowed."
             echo "Current branch: ${GITHUB_REF_NAME}"
             exit 1
           fi
@@ -480,7 +482,7 @@ jobs:
     needs:
       - resolve
       - push
-    if: always() && needs.resolve.result == 'success' && needs.resolve.outputs.environment == 'dev' && (needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true')
+    if: always() && needs.resolve.result == 'success' && needs.push.result == 'success' && needs.resolve.outputs.environment == 'dev' && (needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true')
     uses: ./.github/workflows/deploy.yml
     with:
       environment: dev

@@ -115,6 +115,19 @@ jobs:
         run: |
           set -euo pipefail
 
+          REQUIRED_VARS=("AWS_REGION" "AWS_ACCOUNT_ID" "PROJECT_NAME" "BOOTSTRAP_ROLE_ARN" "TF_STATE_BUCKET")
+          for VAR_NAME in "${REQUIRED_VARS[@]}"; do
+            if [[ -z "${!VAR_NAME}" ]]; then
+              echo "Missing required GitHub Actions variable: ${VAR_NAME}"
+              exit 1
+            fi
+          done
+
+          if [[ -z "${{ secrets.DB_PASSWORD }}" ]]; then
+            echo "Missing required GitHub Actions secret: DB_PASSWORD"
+            exit 1
+          fi
+
           ENVIRONMENT="${{ inputs.environment || github.event.inputs.environment || 'dev' }}"
           ACTION="${{ inputs.action || github.event.inputs.action || 'plan' }}"
           WORKLOAD="${{ inputs.workload || github.event.inputs.workload || 'infra' }}"
