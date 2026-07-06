@@ -1,128 +1,86 @@
-data "aws_availability_zones" "available" {
-  state = "available"
+resource "aws_iam_role" "this" {
+  name = "${var.project_name}-${var.environment}-${var.workload_name}-ec2-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+
+  tags = var.tags
 }
 
-data "aws_ami" "ubuntu" {
-  most_recent = true
-  owners      = ["099720109477"]
+resource "aws_iam_role_policy" "ecr_read" {
+  name = "${var.project_name}-${var.environment}-${var.workload_name}-ecr-read"
+  role = aws_iam_role.this.id
 
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
-  }
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:DescribeImages",
+          "ecr:DescribeRepositories",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
 
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
+resource "aws_iam_role_policy_attachment" "ssm" {
+  role       = aws_iam_role.this.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "this" {
+  name = "${var.project_name}-${var.environment}-${var.workload_name}-instance-profile"
+  role = aws_iam_role.this.name
 }
 
 locals {
-  azs = slice(data.aws_availability_zones.available.names, 0, var.az_count)
-
-  common_tags = merge(var.tags, {
-    Project     = var.project_name
-    Environment = var.environment
-    ManagedBy   = "Terraform"
+  rendered_user_data = templatefile(var.user_data_template_path, {
+    aws_region         = var.aws_region
+    image_uri          = var.image_uri
+    db_host            = var.db_host
+    db_name            = var.db_name
+    db_username        = var.db_username
+    db_password        = var.db_password
+    backend_private_ip = var.backend_private_ip
   })
-
-  frontend_image_uri = "${module.ecr.frontend_repository_url}:${var.frontend_image_tag}"
-  backend_image_uri  = "${module.ecr.backend_repository_url}:${var.backend_image_tag}"
 }
 
-module "network" {
-  source = "./modules/network"
+resource "aws_instance" "this" {
+  ami                         = var.ami_id
+  instance_type               = var.instance_type
+  subnet_id                   = var.subnet_id
+  vpc_security_group_ids      = [var.security_group_id]
+  associate_public_ip_address = var.associate_public_ip_address
+  key_name                    = var.key_name
+  iam_instance_profile        = aws_iam_instance_profile.this.name
 
-  project_name             = var.project_name
-  environment              = var.environment
-  vpc_cidr                 = var.vpc_cidr
-  availability_zones       = local.azs
-  public_subnet_cidrs      = var.public_subnet_cidrs
-  private_app_subnet_cidrs = var.private_app_subnet_cidrs
-  private_db_subnet_cidrs  = var.private_db_subnet_cidrs
-  tags                     = local.common_tags
-}
+  user_data                   = local.rendered_user_data
+  user_data_replace_on_change = true
 
-module "security_groups" {
-  source = "./modules/security-groups"
-
-  project_name                = var.project_name
-  environment                 = var.environment
-  vpc_id                      = module.network.vpc_id
-  allowed_http_cidr           = var.allowed_http_cidr
-  allowed_ssh_cidr            = var.allowed_ssh_cidr
-  backend_allowed_cidr_blocks = length(var.backend_allowed_cidr_blocks) > 0 ? var.backend_allowed_cidr_blocks : var.private_app_subnet_cidrs
-  tags                        = local.common_tags
-}
-
-module "ecr" {
-  source = "./modules/ecr"
-
-  project_name = var.project_name
-  environment  = var.environment
-  tags         = local.common_tags
-}
-
-module "database" {
-  source = "./modules/database"
-
-  project_name          = var.project_name
-  environment           = var.environment
-  private_db_subnet_ids = module.network.private_db_subnet_ids
-  db_security_group_id  = module.security_groups.database_security_group_id
-  db_name               = var.db_name
-  db_username           = var.db_username
-  db_password           = var.db_password
-  db_instance_class     = var.db_instance_class
-  allocated_storage     = var.db_allocated_storage
-  tags                  = local.common_tags
-}
-
-# Backend EC2 workload: uses the same reusable compute module as frontend,
-# but has its own module block, subnet, security group, image, user data, and instance type.
-module "backend_compute" {
-  source = "./modules/compute"
-
-  project_name                = var.project_name
-  environment                 = var.environment
-  workload_name               = "backend"
-  aws_region                  = var.aws_region
-  ami_id                      = data.aws_ami.ubuntu.id
-  instance_type               = var.backend_instance_type
-  key_name                    = var.key_name == "" ? null : var.key_name
-  subnet_id                   = module.network.private_app_subnet_ids[0]
-  security_group_id           = module.security_groups.backend_security_group_id
-  associate_public_ip_address = false
-  image_uri                   = local.backend_image_uri
-  user_data_template_path     = "${path.module}/templates/user_data_backend.sh.tftpl"
-  db_host                     = module.database.db_address
-  db_name                     = var.db_name
-  db_username                 = var.db_username
-  db_password                 = var.db_password
-  tags                        = local.common_tags
-}
-
-# Frontend EC2 workload: uses the same reusable compute module as backend,
-# but has a separate module block so frontend can change independently.
-module "frontend_compute" {
-  source = "./modules/compute"
-
-  project_name                = var.project_name
-  environment                 = var.environment
-  workload_name               = "frontend"
-  aws_region                  = var.aws_region
-  ami_id                      = data.aws_ami.ubuntu.id
-  instance_type               = var.frontend_instance_type
-  key_name                    = var.key_name == "" ? null : var.key_name
-  subnet_id                   = module.network.public_subnet_ids[0]
-  security_group_id           = module.security_groups.frontend_security_group_id
-  associate_public_ip_address = true
-  image_uri                   = local.frontend_image_uri
-  user_data_template_path     = "${path.module}/templates/user_data_frontend.sh.tftpl"
-  db_host                     = ""
-  db_name                     = ""
-  db_username                 = ""
-  db_password                 = ""
-  backend_private_ip          = module.backend_compute.private_ip
-  tags                        = local.common_tags
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-${var.environment}-${var.workload_name}"
+  })
 }

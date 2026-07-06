@@ -19,14 +19,21 @@ CONTAINER_NAME="todo-backend"
 echo "AWS_REGION=$${AWS_REGION}"
 echo "IMAGE_URI=$${IMAGE_URI}"
 echo "DB_HOST=$${DB_HOST}"
+echo "DB_PORT=$${DB_PORT}"
 echo "DB_NAME=$${DB_NAME}"
 echo "DB_USER=$${DB_USER}"
+
+if [[ -z "$${DB_HOST}" || "$${DB_HOST}" == "<RDS_ENDPOINT>" ]]; then
+  echo "ERROR: DB_HOST is empty or still set to placeholder: $${DB_HOST}"
+  echo "Fix Terraform so backend module receives db_host = module.database.db_address"
+  exit 1
+fi
 
 install_dependencies() {
   echo "Installing dependencies..."
 
   apt-get update -y
-  apt-get install -y ca-certificates curl unzip jq
+  apt-get install -y ca-certificates curl unzip jq netcat-openbsd
 
   if ! command -v docker >/dev/null 2>&1; then
     echo "Installing Docker..."
@@ -90,13 +97,7 @@ show_ecr_image_help() {
   echo "Missing image:"
   echo "  $${IMAGE_URI}"
   echo ""
-  echo "Repository:"
-  echo "  $${repository_name}"
-  echo ""
-  echo "Tag:"
-  echo "  $${image_tag}"
-  echo ""
-  echo "Checking available image tags in ECR..."
+  echo "Available image tags in ECR:"
 
   aws ecr describe-images \
     --region "$${AWS_REGION}" \
@@ -106,9 +107,7 @@ show_ecr_image_help() {
 
   echo ""
   echo "Fix:"
-  echo "  Run the GitHub Actions Docker workflow for backend, or push a backend change to dev."
-  echo ""
-  echo "Manual GitHub workflow input:"
+  echo "  Run GitHub Actions Docker workflow."
   echo "  environment: dev"
   echo "  workload: backend"
 }
@@ -129,8 +128,20 @@ ensure_image_available() {
   exit 1
 }
 
+check_database_network() {
+  echo "Checking database network connectivity..."
+
+  if nc -vz "$${DB_HOST}" "$${DB_PORT}"; then
+    echo "Database port is reachable: $${DB_HOST}:$${DB_PORT}"
+  else
+    echo "ERROR: Cannot reach database: $${DB_HOST}:$${DB_PORT}"
+    echo "Check RDS security group allows backend EC2 security group on TCP 3306."
+    exit 1
+  fi
+}
+
 run_backend_container() {
-  echo "Stopping old container if it exists..."
+  echo "Stopping old backend container if it exists..."
   docker rm -f "$${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
   echo "Starting backend container..."
@@ -155,7 +166,7 @@ run_backend_container() {
     fi
 
     echo "Backend not ready yet. Attempt $${i}/30"
-    docker logs "$${CONTAINER_NAME}" --tail 30 || true
+    docker logs "$${CONTAINER_NAME}" --tail 50 || true
     sleep 5
   done
 
@@ -167,4 +178,5 @@ run_backend_container() {
 
 install_dependencies
 ensure_image_available
+check_database_network
 run_backend_container
