@@ -32,12 +32,12 @@ variable "public_subnet_cidrs" {
 }
 
 variable "private_app_subnet_cidrs" {
-  description = "Private application subnet CIDR blocks."
+  description = "Private app subnet CIDR blocks."
   type        = list(string)
 }
 
 variable "private_db_subnet_cidrs" {
-  description = "Private database subnet CIDR blocks."
+  description = "Private DB subnet CIDR blocks."
   type        = list(string)
 }
 
@@ -54,7 +54,7 @@ variable "backend_instance_type" {
 }
 
 variable "key_name" {
-  description = "Optional EC2 key pair name. Use empty string if not required."
+  description = "Optional EC2 key pair name."
   type        = string
   default     = ""
 }
