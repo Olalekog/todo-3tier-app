@@ -1,5 +1,4 @@
 import os
-from time import datetime
 from typing import List
 
 import pymysql
