@@ -71,16 +71,16 @@ module "security_groups" {
 module "database" {
   source = "./modules/database"
 
-  project_name         = var.project_name
-  environment          = var.environment
+  project_name          = var.project_name
+  environment           = var.environment
   private_db_subnet_ids = module.network.private_db_subnet_ids
-  db_security_group_id = module.security_groups.database_security_group_id
-  db_name              = var.db_name
-  db_username          = var.db_username
-  db_password          = var.db_password
-  db_instance_class    = var.db_instance_class
-  allocated_storage    = var.db_allocated_storage
-  tags                 = local.common_tags
+  db_security_group_id  = module.security_groups.database_security_group_id
+  db_name               = var.db_name
+  db_username           = var.db_username
+  db_password           = var.db_password
+  db_instance_class     = var.db_instance_class
+  allocated_storage     = var.db_allocated_storage
+  tags                  = local.common_tags
 }
 
 module "backend_compute" {
