@@ -1,6 +1,15 @@
 name: Deploy Infrastructure
 
 on:
+  pull_request:
+    branches:
+      - uat
+      - prod
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
   workflow_dispatch:
     inputs:
       environment:
@@ -8,13 +17,13 @@ on:
         required: true
         type: choice
         options: [dev, uat, prod]
-        default: dev
+        default: uat
       action:
         description: Terraform action
         required: true
         type: choice
         options: [plan, apply, destroy]
-        default: destroy
+        default: plan
       workload:
         description: What changed / what to deploy
         required: false
@@ -78,6 +87,39 @@ env:
   APP_DIR: .
 
 jobs:
+
+  validate-promotion-path:
+    name: Validate PR Promotion Path
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Enforce dev-to-uat and uat-to-prod only
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
+          HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
+
+          echo "Pull request source branch: ${HEAD_BRANCH}"
+          echo "Pull request target branch: ${BASE_BRANCH}"
+
+          if [[ "${BASE_BRANCH}" == "uat" && "${HEAD_BRANCH}" == "dev" ]]; then
+            echo "Allowed promotion path: dev -> uat"
+            exit 0
+          fi
+
+          if [[ "${BASE_BRANCH}" == "prod" && "${HEAD_BRANCH}" == "uat" ]]; then
+            echo "Allowed promotion path: uat -> prod"
+            exit 0
+          fi
+
+          echo "Invalid promotion path: ${HEAD_BRANCH} -> ${BASE_BRANCH}"
+          echo "Only these PR promotion paths are allowed:"
+          echo "  dev -> uat"
+          echo "  uat -> prod"
+          exit 1
+
   build:
     name: Build / Resolve Deploy Inputs
     runs-on: ubuntu-latest
@@ -102,7 +144,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          ENVIRONMENT="${{ inputs.environment || github.event.inputs.environment || 'dev' }}"
+          ENVIRONMENT="${{ inputs.environment || github.event.inputs.environment || 'uat' }}"
+
+          if [[ "${{ github.event_name }}" == "push" && "${GITHUB_REF_NAME}" != "uat" ]]; then
+            echo "Push-based deploy is restricted to the uat branch only."
+            echo "Current branch: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
           ACTION="${{ inputs.action || github.event.inputs.action || 'plan' }}"
           WORKLOAD="${{ inputs.workload || github.event.inputs.workload || 'all' }}"
           FRONTEND_IMAGE_TAG="${{ inputs.frontend_image_tag || github.event.inputs.frontend_image_tag || 'latest' }}"
