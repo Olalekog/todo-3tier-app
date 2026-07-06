@@ -1,47 +1,159 @@
 #!/bin/bash
-set -euxo pipefail
+set -euo pipefail
 
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y docker.io awscli
-systemctl enable docker
-systemctl start docker
+exec > >(tee /var/log/user-data-frontend.log | logger -t user-data-frontend -s 2>/dev/console) 2>&1
 
-ACCOUNT_ID=$(echo "${frontend_image_uri}" | cut -d'.' -f1)
-REGISTRY="$${ACCOUNT_ID}.dkr.ecr.${aws_region}.amazonaws.com"
+echo "Starting frontend user data script..."
 
-aws ecr get-login-password --region "${aws_region}" | docker login --username AWS --password-stdin "$${REGISTRY}"
+AWS_REGION="${aws_region}"
+IMAGE_URI="${image_uri}"
+BACKEND_HOST="${backend_private_ip}"
 
-mkdir -p /opt/todo-frontend
-cat > /opt/todo-frontend/default.conf <<'NGINX'
-server {
-    listen 80;
-    server_name _;
+CONTAINER_NAME="todo-frontend"
 
-    root /usr/share/nginx/html;
-    index index.html;
+echo "AWS_REGION=$${AWS_REGION}"
+echo "IMAGE_URI=$${IMAGE_URI}"
+echo "BACKEND_HOST=$${BACKEND_HOST}"
 
-    location / {
-        try_files $uri /index.html;
-    }
+install_dependencies() {
+  echo "Installing dependencies..."
 
-    location /api/ {
-        proxy_pass http://${backend_private_ip}:8000/;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
+  apt-get update -y
+  apt-get install -y ca-certificates curl unzip jq
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Installing Docker..."
+    apt-get install -y docker.io
+  fi
+
+  systemctl enable docker
+  systemctl start docker
+
+  if ! command -v aws >/dev/null 2>&1; then
+    echo "Installing AWS CLI..."
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
+    unzip -q /tmp/awscliv2.zip -d /tmp
+    /tmp/aws/install
+  fi
 }
-NGINX
 
-docker pull "${frontend_image_uri}"
-docker rm -f todo-frontend || true
+ecr_login() {
+  local registry
+  registry="$(echo "$${IMAGE_URI}" | cut -d/ -f1)"
 
-docker run -d \
-  --name todo-frontend \
-  --restart unless-stopped \
-  -p 80:80 \
-  -v /opt/todo-frontend/default.conf:/etc/nginx/conf.d/default.conf:ro \
-  "${frontend_image_uri}"
+  echo "Logging in to ECR registry: $${registry}"
+
+  aws ecr get-login-password --region "$${AWS_REGION}" | \
+    docker login --username AWS --password-stdin "$${registry}"
+}
+
+image_exists_locally() {
+  docker image inspect "$${IMAGE_URI}" >/dev/null 2>&1
+}
+
+pull_image_with_retry() {
+  local attempts=5
+  local sleep_seconds=20
+
+  echo "Image not found locally. Pulling from ECR: $${IMAGE_URI}"
+
+  for attempt in $(seq 1 "$${attempts}"); do
+    echo "Docker pull attempt $${attempt}/$${attempts}"
+
+    if docker pull "$${IMAGE_URI}"; then
+      echo "Successfully pulled image: $${IMAGE_URI}"
+      return 0
+    fi
+
+    echo "Image pull failed. Waiting $${sleep_seconds} seconds before retry..."
+    sleep "$${sleep_seconds}"
+  done
+
+  return 1
+}
+
+show_ecr_image_help() {
+  local repository_name
+  local image_tag
+
+  repository_name="$(echo "$${IMAGE_URI}" | cut -d/ -f2- | cut -d: -f1)"
+  image_tag="$(echo "$${IMAGE_URI}" | awk -F: '{print $NF}')"
+
+  echo "ERROR: Frontend Docker image could not be pulled."
+  echo "Missing image:"
+  echo "  $${IMAGE_URI}"
+  echo ""
+  echo "Repository:"
+  echo "  $${repository_name}"
+  echo ""
+  echo "Tag:"
+  echo "  $${image_tag}"
+  echo ""
+  echo "Checking available image tags in ECR..."
+
+  aws ecr describe-images \
+    --region "$${AWS_REGION}" \
+    --repository-name "$${repository_name}" \
+    --query "imageDetails[*].imageTags" \
+    --output table || true
+
+  echo ""
+  echo "Fix:"
+  echo "  Run the GitHub Actions Docker workflow for frontend, or push a frontend change to dev."
+  echo ""
+  echo "Manual GitHub workflow input:"
+  echo "  environment: dev"
+  echo "  workload: frontend"
+}
+
+ensure_image_available() {
+  if image_exists_locally; then
+    echo "Docker image already exists locally: $${IMAGE_URI}"
+    return 0
+  fi
+
+  ecr_login
+
+  if pull_image_with_retry; then
+    return 0
+  fi
+
+  show_ecr_image_help
+  exit 1
+}
+
+run_frontend_container() {
+  echo "Stopping old container if it exists..."
+  docker rm -f "$${CONTAINER_NAME}" >/dev/null 2>&1 || true
+
+  echo "Starting frontend container..."
+  docker run -d \
+    --name "$${CONTAINER_NAME}" \
+    --restart unless-stopped \
+    -p 80:80 \
+    -e BACKEND_HOST="$${BACKEND_HOST}" \
+    "$${IMAGE_URI}"
+
+  echo "Waiting for frontend health check..."
+
+  for i in $(seq 1 30); do
+    if curl -fsS http://localhost >/dev/null 2>&1; then
+      echo "Frontend is serving traffic."
+      docker ps
+      exit 0
+    fi
+
+    echo "Frontend not ready yet. Attempt $${i}/30"
+    docker logs "$${CONTAINER_NAME}" --tail 30 || true
+    sleep 5
+  done
+
+  echo "ERROR: Frontend container did not become healthy."
+  docker ps -a
+  docker logs "$${CONTAINER_NAME}" --tail 200 || true
+  exit 1
+}
+
+install_dependencies
+ensure_image_available
+run_frontend_container
