@@ -3,7 +3,7 @@ name: Deploy Infrastructure
 on:
   pull_request:
     branches:
-      - dev
+      - uat
       - prod
     types:
       - opened
@@ -17,7 +17,7 @@ on:
         required: true
         type: choice
         options: [dev, uat, prod]
-        default: dev
+        default: uat
       action:
         description: Terraform action
         required: true
@@ -98,6 +98,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            if [[ "${GITHUB_REF_NAME}" != "dev" ]]; then
+              echo "Push-based deploy is restricted to the dev branch only."
+              echo "Current branch: ${GITHUB_REF_NAME}"
+              exit 1
+            fi
+            echo "Push-based deploy allowed from dev branch."
+          fi
+
+
           BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
           HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
 
@@ -147,7 +157,7 @@ jobs:
           ENVIRONMENT="${{ inputs.environment || github.event.inputs.environment || 'uat' }}"
 
           if [[ "${{ github.event_name }}" == "push" && "${GITHUB_REF_NAME}" != "uat" ]]; then
-            echo "Push-based deploy is restricted to the dev branch only."
+            echo "Push-based deploy is restricted to the uat branch only."
             echo "Current branch: ${GITHUB_REF_NAME}"
             exit 1
           fi
