@@ -150,7 +150,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          ENVIRONMENT="${{ inputs.environment || github.event.inputs.environment || 'uat' }}"
+          ENVIRONMENT="${{ inputs.environment || inputs.environment || github.event.inputs.environment || 'dev' }}"
 
           if [[ "${{ github.event_name }}" == "push" && "${GITHUB_REF_NAME}" != "dev" ]]; then
             echo "Push-based deploy is restricted to the dev branch only."
@@ -159,9 +159,9 @@ jobs:
           fi
 
           ACTION="${{ inputs.action || inputs.action || github.event.inputs.action || 'plan' }}"
-          WORKLOAD="${{ inputs.workload || github.event.inputs.workload || 'all' }}"
-          FRONTEND_IMAGE_TAG="${{ inputs.frontend_image_tag || github.event.inputs.frontend_image_tag || 'latest' }}"
-          BACKEND_IMAGE_TAG="${{ inputs.backend_image_tag || github.event.inputs.backend_image_tag || 'latest' }}"
+          WORKLOAD="${{ inputs.workload || inputs.workload || github.event.inputs.workload || 'all' }}"
+          FRONTEND_IMAGE_TAG="${{ inputs.frontend_image_tag || inputs.frontend_image_tag || github.event.inputs.frontend_image_tag || 'latest' }}"
+          BACKEND_IMAGE_TAG="${{ inputs.backend_image_tag || inputs.backend_image_tag || github.event.inputs.backend_image_tag || 'latest' }}"
           ALLOW_REPLACEMENT="${{ inputs.allow_replacement || github.event.inputs.allow_replacement || false }}"
 
           case "${ENVIRONMENT}" in dev|uat|prod) ;; *) echo "Invalid environment: ${ENVIRONMENT}"; exit 1 ;; esac
@@ -354,7 +354,7 @@ jobs:
   deploy-nonprod:
     name: Deploy / Apply Non-Prod
     needs: [build, test]
-    if: needs.build.outputs.action == 'apply' && needs.build.outputs.environment != 'prod' && needs.test.outputs.change_count != '0'
+    if: needs.build.outputs.action == 'apply' && needs.build.outputs.environment != 'prod'
     runs-on: ubuntu-latest
     env:
       ENVIRONMENT: ${{ needs.build.outputs.environment }}
