@@ -98,16 +98,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            if [[ "${GITHUB_REF_NAME}" != "dev" ]]; then
-              echo "Push-based deploy is restricted to the dev branch only."
-              echo "Current branch: ${GITHUB_REF_NAME}"
-              exit 1
-            fi
-            echo "Push-based deploy allowed from dev branch."
-          fi
-
-
           BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
           HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
 
