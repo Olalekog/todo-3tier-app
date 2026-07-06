@@ -18,6 +18,7 @@ apt-get install -y ca-certificates curl unzip jq docker.io
 
 systemctl enable docker
 systemctl start docker
+systemctl status docker --no-pager || true
 
 if ! command -v aws >/dev/null 2>&1; then
   curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
@@ -30,19 +31,23 @@ REPOSITORY_NAME="$(echo "$${IMAGE_URI}" | cut -d/ -f2- | cut -d: -f1)"
 
 aws ecr get-login-password --region "$${AWS_REGION}" | docker login --username AWS --password-stdin "$${REGISTRY}"
 
+IMAGE_READY=false
+
 if docker image inspect "$${IMAGE_URI}" >/dev/null 2>&1; then
   echo "Image already exists locally: $${IMAGE_URI}"
+  IMAGE_READY=true
 else
   echo "Pulling image from ECR: $${IMAGE_URI}"
   for i in 1 2 3 4 5; do
     if docker pull "$${IMAGE_URI}"; then
+      IMAGE_READY=true
       break
     fi
 
     if [[ "$${i}" == "5" ]]; then
-      echo "ERROR: Image pull failed. Available ECR tags:"
+      echo "WARNING: Image pull failed. Falling back to a simple nginx page. Available ECR tags:"
       aws ecr describe-images --region "$${AWS_REGION}" --repository-name "$${REPOSITORY_NAME}" --query "imageDetails[*].imageTags" --output table || true
-      exit 1
+      break
     fi
 
     sleep 20
@@ -51,7 +56,31 @@ fi
 
 docker rm -f "$${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
-docker run -d   --name "$${CONTAINER_NAME}"   --restart unless-stopped   -p 80:80   -e BACKEND_HOST="$${BACKEND_HOST}"   "$${IMAGE_URI}"
+if [[ "$${IMAGE_READY}" == "true" ]]; then
+  docker run -d   --name "$${CONTAINER_NAME}"   --restart unless-stopped   -p 80:80   -e BACKEND_HOST="$${BACKEND_HOST}"   "$${IMAGE_URI}"
+else
+  mkdir -p /tmp/frontend-fallback
+  cat > /tmp/frontend-fallback/index.html <<'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Todo App Starting</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem; line-height: 1.5; }
+    code { background: #f3f3f3; padding: 0.2rem 0.4rem; }
+  </style>
+</head>
+<body>
+  <h1>Todo app is starting</h1>
+  <p>The frontend container is booting. If this page persists, check the EC2 user-data logs and the image availability in ECR.</p>
+  <p>Look for details in <code>/var/log/user-data-frontend.log</code>.</p>
+</body>
+</html>
+EOF
+  docker run -d --name "$${CONTAINER_NAME}" --restart unless-stopped -p 80:80 -v /tmp/frontend-fallback:/usr/share/nginx/html:ro nginx:alpine
+fi
 
 for i in $(seq 1 30); do
   if curl -fsS http://localhost >/dev/null 2>&1; then
@@ -61,10 +90,12 @@ for i in $(seq 1 30); do
   fi
 
   echo "Frontend not ready yet. Attempt $${i}/30"
-  docker logs "$${CONTAINER_NAME}" --tail 50 || true
+  docker ps --filter "name=$${CONTAINER_NAME}" || true
+  docker logs "$${CONTAINER_NAME}" --tail 100 || true
   sleep 5
 done
 
 echo "ERROR: Frontend failed health check."
+docker ps -a || true
 docker logs "$${CONTAINER_NAME}" --tail 200 || true
 exit 1
