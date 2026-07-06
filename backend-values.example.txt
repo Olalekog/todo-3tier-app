@@ -1,0 +1,7 @@
+# Existing Terraform remote backend values
+# These are consumed by GitHub Actions as repository variables.
+# DynamoDB locking and custom KMS backend settings were removed.
+
+BOOTSTRAP_ROLE_ARN=arn:aws:iam::866934333672:role/react-js-application-github-actions-bootstrap-role
+TF_STATE_BUCKET=react-js-application-terraform-state-866934333672
+OIDC_PROVIDER_ARN=arn:aws:iam::866934333672:oidc-provider/token.actions.githubusercontent.com

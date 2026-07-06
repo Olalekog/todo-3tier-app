@@ -25,18 +25,15 @@ echo "DB_USER=$${DB_USER}"
 
 if [[ -z "$${DB_HOST}" || "$${DB_HOST}" == "<RDS_ENDPOINT>" ]]; then
   echo "ERROR: DB_HOST is empty or still set to placeholder: $${DB_HOST}"
-  echo "Fix Terraform so backend module receives db_host = module.database.db_address"
+  echo "Fix Terraform root module so backend_compute has: db_host = module.database.db_address"
   exit 1
 fi
 
 install_dependencies() {
-  echo "Installing dependencies..."
-
   apt-get update -y
   apt-get install -y ca-certificates curl unzip jq netcat-openbsd
 
   if ! command -v docker >/dev/null 2>&1; then
-    echo "Installing Docker..."
     apt-get install -y docker.io
   fi
 
@@ -44,7 +41,6 @@ install_dependencies() {
   systemctl start docker
 
   if ! command -v aws >/dev/null 2>&1; then
-    echo "Installing AWS CLI..."
     curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
     unzip -q /tmp/awscliv2.zip -d /tmp
     /tmp/aws/install
@@ -55,10 +51,7 @@ ecr_login() {
   local registry
   registry="$(echo "$${IMAGE_URI}" | cut -d/ -f1)"
 
-  echo "Logging in to ECR registry: $${registry}"
-
-  aws ecr get-login-password --region "$${AWS_REGION}" | \
-    docker login --username AWS --password-stdin "$${registry}"
+  aws ecr get-login-password --region "$${AWS_REGION}" |     docker login --username AWS --password-stdin "$${registry}"
 }
 
 image_exists_locally() {
@@ -69,17 +62,14 @@ pull_image_with_retry() {
   local attempts=5
   local sleep_seconds=20
 
-  echo "Image not found locally. Pulling from ECR: $${IMAGE_URI}"
-
   for attempt in $(seq 1 "$${attempts}"); do
-    echo "Docker pull attempt $${attempt}/$${attempts}"
+    echo "Docker pull attempt $${attempt}/$${attempts}: $${IMAGE_URI}"
 
     if docker pull "$${IMAGE_URI}"; then
       echo "Successfully pulled image: $${IMAGE_URI}"
       return 0
     fi
 
-    echo "Image pull failed. Waiting $${sleep_seconds} seconds before retry..."
     sleep "$${sleep_seconds}"
   done
 
@@ -88,28 +78,14 @@ pull_image_with_retry() {
 
 show_ecr_image_help() {
   local repository_name
-  local image_tag
-
   repository_name="$(echo "$${IMAGE_URI}" | cut -d/ -f2- | cut -d: -f1)"
-  image_tag="$(echo "$${IMAGE_URI}" | awk -F: '{print $NF}')"
 
-  echo "ERROR: Backend Docker image could not be pulled."
-  echo "Missing image:"
-  echo "  $${IMAGE_URI}"
-  echo ""
+  echo "ERROR: Backend Docker image could not be pulled: $${IMAGE_URI}"
   echo "Available image tags in ECR:"
 
-  aws ecr describe-images \
-    --region "$${AWS_REGION}" \
-    --repository-name "$${repository_name}" \
-    --query "imageDetails[*].imageTags" \
-    --output table || true
+  aws ecr describe-images     --region "$${AWS_REGION}"     --repository-name "$${repository_name}"     --query "imageDetails[*].imageTags"     --output table || true
 
-  echo ""
-  echo "Fix:"
-  echo "  Run GitHub Actions Docker workflow."
-  echo "  environment: dev"
-  echo "  workload: backend"
+  echo "Fix: run GitHub Actions Docker workflow with environment=dev and workload=backend."
 }
 
 ensure_image_available() {
@@ -129,34 +105,21 @@ ensure_image_available() {
 }
 
 check_database_network() {
-  echo "Checking database network connectivity..."
+  echo "Checking database connectivity: $${DB_HOST}:$${DB_PORT}"
 
   if nc -vz "$${DB_HOST}" "$${DB_PORT}"; then
-    echo "Database port is reachable: $${DB_HOST}:$${DB_PORT}"
+    echo "Database port is reachable."
   else
     echo "ERROR: Cannot reach database: $${DB_HOST}:$${DB_PORT}"
-    echo "Check RDS security group allows backend EC2 security group on TCP 3306."
+    echo "Check that RDS security group allows backend EC2 security group on TCP 3306."
     exit 1
   fi
 }
 
 run_backend_container() {
-  echo "Stopping old backend container if it exists..."
   docker rm -f "$${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
-  echo "Starting backend container..."
-  docker run -d \
-    --name "$${CONTAINER_NAME}" \
-    --restart unless-stopped \
-    -p 8000:8000 \
-    -e DB_HOST="$${DB_HOST}" \
-    -e DB_PORT="$${DB_PORT}" \
-    -e DB_NAME="$${DB_NAME}" \
-    -e DB_USER="$${DB_USER}" \
-    -e DB_PASSWORD="$${DB_PASSWORD}" \
-    "$${IMAGE_URI}"
-
-  echo "Waiting for backend health check..."
+  docker run -d     --name "$${CONTAINER_NAME}"     --restart unless-stopped     -p 8000:8000     -e DB_HOST="$${DB_HOST}"     -e DB_PORT="$${DB_PORT}"     -e DB_NAME="$${DB_NAME}"     -e DB_USER="$${DB_USER}"     -e DB_PASSWORD="$${DB_PASSWORD}"     "$${IMAGE_URI}"
 
   for i in $(seq 1 30); do
     if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
