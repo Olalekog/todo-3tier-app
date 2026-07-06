@@ -3,7 +3,7 @@ name: Docker Build Test Push
 on:
   pull_request:
     branches:
-      - uat
+      - dev
       - prod
     types:
       - opened
@@ -11,7 +11,7 @@ on:
       - reopened
       - ready_for_review
   push:
-    branches: [uat]
+    branches: [dev]
     paths:
       - "frontend/**"
       - "backend/**"
@@ -25,7 +25,7 @@ on:
         required: true
         type: choice
         options: [dev, uat, prod]
-        default: uat
+        default: dev
       workload:
         description: Workload to build
         required: true
@@ -89,8 +89,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF_NAME}" != "uat" ]]; then
-            echo "Push-based workflow execution is restricted to the uat branch only."
+          if [[ "${GITHUB_REF_NAME}" != "dev" ]]; then
+            echo "Push-based workflow execution is restricted to the dev branch only."
             echo "Current branch: ${GITHUB_REF_NAME}"
             exit 1
           fi
@@ -173,9 +173,9 @@ jobs:
             fi
           else
             case "${GITHUB_REF_NAME}" in
-              uat) ENVIRONMENT="uat" ;;
-              dev|prod)
-                echo "Push-based Docker workflow is restricted. Only pushes to the uat branch are allowed."
+              dev) ENVIRONMENT="dev" ;;
+              uat|prod)
+                echo "Push-based Docker workflow is restricted. Only pushes to the dev branch are allowed."
                 echo "Current branch: ${GITHUB_REF_NAME}"
                 exit 1
                 ;;
@@ -527,13 +527,13 @@ jobs:
             --query "imageDetails[*].imageTags" \
             --output table
 
-  deploy-uat:
-    name: Deploy UAT Workload With New Image
+  deploy-dev:
+    name: Deploy Dev Workload With New Image
     needs: [resolve, push]
-    if: needs.resolve.outputs.environment == 'uat' && (needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true')
+    if: needs.resolve.outputs.environment == 'dev' && (needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true')
     uses: ./.github/workflows/deploy.yml
     with:
-      environment: uat
+      environment: dev
       action: apply
       workload: ${{ needs.resolve.outputs.workload }}
       frontend_image_tag: ${{ needs.resolve.outputs.frontend_image_tag }}
@@ -541,13 +541,13 @@ jobs:
       allow_replacement: false
     secrets: inherit
 
-  deploy-uat-infra-only:
-    name: Deploy UAT Infrastructure Only
+  deploy-dev-infra-only:
+    name: Deploy Dev Infrastructure Only
     needs: resolve
-    if: needs.resolve.outputs.environment == 'uat' && needs.resolve.outputs.workload == 'infra'
+    if: needs.resolve.outputs.environment == 'dev' && needs.resolve.outputs.workload == 'infra'
     uses: ./.github/workflows/deploy.yml
     with:
-      environment: uat
+      environment: dev
       action: apply
       workload: infra
       frontend_image_tag: latest
