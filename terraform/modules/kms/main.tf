@@ -26,6 +26,9 @@ resource "aws_kms_key" "this" {
         Action = [
           "kms:Encrypt",
           "kms:Decrypt",
+          "kms:CreateGrant",
+          "kms:ListGrants",
+          "kms:RevokeGrant",
           "kms:ReEncryptFrom",
           "kms:ReEncryptTo",
           "kms:GenerateDataKey",
@@ -34,8 +37,14 @@ resource "aws_kms_key" "this" {
         ]
         Resource = "*"
         Condition = {
+          Bool = {
+            "kms:GrantIsForAWSResource" = "true"
+          }
           ArnLike = {
             "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*"
+          }
+          StringEquals = {
+            "kms:ViaService" = "logs.${var.aws_region}.amazonaws.com"
           }
         }
       }
