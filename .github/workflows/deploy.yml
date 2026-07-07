@@ -93,18 +93,6 @@ env:
   TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION || '1.9.0' }}
 
 jobs:
-  security-tools:
-    name: Security Scan Gate
-    uses: ./.github/workflows/security-tools.yml
-    with:
-      environment: ${{ inputs.environment }}
-      action: ${{ inputs.action }}
-      image_tag: latest
-      scan_frontend: false
-      scan_backend: false
-      scan_source: false
-    secrets: inherit
-
   resolve:
     name: Resolve Deploy Inputs
     runs-on: ubuntu-latest
@@ -199,7 +187,6 @@ jobs:
   plan:
     name: Terraform Validate and Plan
     needs:
-      - security-tools
       - resolve
     runs-on: ubuntu-latest
     outputs:
@@ -290,7 +277,6 @@ jobs:
   apply:
     name: Terraform Apply
     needs:
-      - security-tools
       - resolve
       - plan
     if: needs.resolve.outputs.action == 'apply'

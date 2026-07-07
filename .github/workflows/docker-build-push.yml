@@ -10,17 +10,6 @@ on:
       - "terraform/**"
       - ".github/workflows/docker-build-push.yml"
       - ".github/workflows/deploy.yml"
-      - "terraform/security-tools/deploy/**"
-      - "terraform/templates/user_data_sonarqube.sh.tftpl"
-      - "!.github/workflows/sonarqube-deploy.yml"
-
-  workflow_run:
-    workflows:
-      - SonarQube Infrastructure Deploy
-    types:
-      - completed
-    branches:
-      - dev
 
   pull_request:
     branches:
@@ -111,7 +100,7 @@ jobs:
   resolve:
     name: Resolve Changes
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    if: github.event_name != 'pull_request'
     outputs:
       environment: ${{ steps.resolve.outputs.environment }}
       workload: ${{ steps.resolve.outputs.workload }}
