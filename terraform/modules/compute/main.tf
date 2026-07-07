@@ -67,6 +67,7 @@ locals {
 }
 
 resource "aws_instance" "this" {
+  #checkov:skip=CKV_AWS_88:Frontend and SonarQube instances are intentionally public-facing in this deployment.
   ami                         = var.ami_id
   instance_type               = var.instance_type
   subnet_id                   = var.subnet_id

@@ -890,6 +890,7 @@ This simplified version does **not** use:
 
 - ALB; frontend and backend run directly on EC2 instances
 - Frontend and SonarQube are intentionally internet-facing
+- CKV_AWS_88 is skipped for the shared EC2 module because those public-facing workloads are intentional
 - ASG
 - Route 53
 - ACM
