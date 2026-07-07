@@ -278,6 +278,8 @@ jobs:
       - resolve
       - build-images
     if: needs.resolve.outputs.scan_frontend == 'true' || needs.resolve.outputs.scan_backend == 'true'
+    env:
+      TRIVY_DISABLE_VEX_NOTICE: "true"
     steps:
       - name: Download Docker images
         uses: actions/download-artifact@v4
