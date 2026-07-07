@@ -84,7 +84,7 @@ module "security_integration" {
   environment             = var.environment
   aws_region              = var.aws_region
   vpc_id                  = module.network.vpc_id
-  public_subnet_id        = module.network.public_subnet_ids[0]
+  sonarqube_subnet_id     = module.network.private_app_subnet_ids[0]
   ami_id                  = data.aws_ami.ubuntu.id
   allowed_ssh_cidr        = var.allowed_ssh_cidr
   key_name                = var.key_name

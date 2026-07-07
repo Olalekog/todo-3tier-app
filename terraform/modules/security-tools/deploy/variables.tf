@@ -18,8 +18,8 @@ variable "vpc_id" {
   type        = string
 }
 
-variable "public_subnet_id" {
-  description = "Public subnet ID where SonarQube will run."
+variable "sonarqube_subnet_id" {
+  description = "Subnet ID where SonarQube will run. Use a private app subnet to avoid public exposure."
   type        = string
 }
 

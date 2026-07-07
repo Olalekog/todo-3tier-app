@@ -45,9 +45,9 @@ module "sonarqube_compute" {
   ami_id                      = var.ami_id
   instance_type               = var.sonarqube_instance_type
   key_name                    = var.key_name == "" ? null : var.key_name
-  subnet_id                   = var.public_subnet_id
+  subnet_id                   = var.sonarqube_subnet_id
   security_group_id           = aws_security_group.sonarqube[0].id
-  associate_public_ip_address = true
+  associate_public_ip_address = false
 
   image_uri               = ""
   ecr_repository_arns     = []
