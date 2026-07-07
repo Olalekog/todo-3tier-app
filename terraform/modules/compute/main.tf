@@ -18,6 +18,7 @@ resource "aws_iam_role" "this" {
 }
 
 resource "aws_iam_role_policy" "ecr_read" {
+  count = length(var.ecr_repository_arns) > 0 ? 1 : 0
   name = "${var.project_name}-${var.environment}-${var.workload_name}-ecr-read"
   role = aws_iam_role.this.id
 
