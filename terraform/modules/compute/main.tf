@@ -55,7 +55,7 @@ resource "aws_iam_instance_profile" "this" {
 }
 
 locals {
-  rendered_user_data = templatefile(var.user_data_template_path, {
+  rendered_user_data = templatefile(var.user_data_template_path, merge({
     aws_region         = var.aws_region
     image_uri          = var.image_uri
     db_host            = var.db_host
@@ -63,7 +63,7 @@ locals {
     db_username        = var.db_username
     db_password        = var.db_password
     backend_private_ip = var.backend_private_ip
-  })
+  }, var.user_data_template_vars))
 }
 
 resource "aws_instance" "this" {

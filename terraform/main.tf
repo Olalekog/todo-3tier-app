@@ -78,10 +78,11 @@ module "security_groups" {
 }
 
 module "security_integration" {
-  source = "./modules/security-tools/integration"
+  source = "./modules/security-tools/deploy"
 
   project_name            = var.project_name
   environment             = var.environment
+  aws_region              = var.aws_region
   vpc_id                  = module.network.vpc_id
   public_subnet_id        = module.network.public_subnet_ids[0]
   ami_id                  = data.aws_ami.ubuntu.id

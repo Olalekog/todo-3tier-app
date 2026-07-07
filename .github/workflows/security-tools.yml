@@ -315,7 +315,7 @@ jobs:
       - scan-terraform
       - scan-source
       - scan-images
-    if: always() && needs.resolve.outputs.deploy_security_tools == 'true' && needs.scan-terraform.result == 'success' && (needs.scan-source.result == 'success' || needs.scan-source.result == 'skipped') && (needs.scan-images.result == 'success' || needs.scan-images.result == 'skipped')
+    if: always() && needs.resolve.outputs.deploy_security_tools == 'true' && needs.resolve.outputs.environment == 'dev' && needs.scan-terraform.result == 'success' && (needs.scan-source.result == 'success' || needs.scan-source.result == 'skipped') && (needs.scan-images.result == 'success' || needs.scan-images.result == 'skipped')
     env:
       ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
       TFVARS_FILE: ${{ needs.resolve.outputs.tfvars_file }}
@@ -357,10 +357,10 @@ jobs:
           set -euo pipefail
           terraform plan \
             -var-file="${TFVARS_FILE}" \
+            -var-file="modules/security-tools/deploy/sonarqube.tfvars" \
             -var="aws_region=${AWS_REGION}" \
             -var="project_name=${PROJECT_NAME}" \
             -var="db_password=${DB_PASSWORD}" \
-            -var="enable_sonarqube=true" \
             -target=module.security_integration \
             -out=security-tools-tfplan
 
@@ -377,7 +377,7 @@ jobs:
     needs:
       - resolve
       - plan-security-tools
-    if: needs.resolve.outputs.action == 'apply' && needs.resolve.outputs.deploy_security_tools == 'true'
+    if: needs.resolve.outputs.action == 'apply' && needs.resolve.outputs.deploy_security_tools == 'true' && needs.resolve.outputs.environment == 'dev'
     environment: ${{ needs.resolve.outputs.environment == 'prod' && 'prod' || '' }}
     env:
       STATE_KEY: ${{ needs.resolve.outputs.state_key }}

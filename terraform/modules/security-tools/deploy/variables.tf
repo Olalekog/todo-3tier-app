@@ -8,6 +8,11 @@ variable "environment" {
   type        = string
 }
 
+variable "aws_region" {
+  description = "AWS region used by the compute module user data template."
+  type        = string
+}
+
 variable "vpc_id" {
   description = "VPC ID where resources will be created."
   type        = string

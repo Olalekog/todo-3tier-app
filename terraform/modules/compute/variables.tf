@@ -97,6 +97,12 @@ variable "backend_private_ip" {
   default     = ""
 }
 
+variable "user_data_template_vars" {
+  description = "Additional user data template variables for workload-specific scripts."
+  type        = map(string)
+  default     = {}
+}
+
 variable "tags" {
   description = "Common tags."
   type        = map(string)

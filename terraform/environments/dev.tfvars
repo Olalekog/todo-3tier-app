@@ -25,6 +25,8 @@ db_username          = "todo_admin"
 db_instance_class    = "db.t3.micro"
 db_allocated_storage = 20
 
+enable_sonarqube = false
+
 tags = {
   Owner       = "Olalekan"
   Application = "react-js-application"
