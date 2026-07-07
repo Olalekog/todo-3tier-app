@@ -106,6 +106,7 @@ resource "aws_security_group" "database" {
 
 resource "aws_security_group" "sonarqube" {
   count       = var.enable_sonarqube ? 1 : 0
+  #checkov:skip=CKV2_AWS_5:Attachment is defined in root compute module.
   name        = "${var.project_name}-${var.environment}-sonarqube-sg"
   description = "SonarQube security group"
   vpc_id      = var.vpc_id

@@ -87,7 +87,7 @@ module "security_integration" {
   environment             = var.environment
   aws_region              = var.aws_region
   vpc_id                  = module.network.vpc_id
-  sonarqube_subnet_id     = module.network.private_app_subnet_ids[0]
+  sonarqube_subnet_id     = module.network.public_subnet_ids[0]
   ami_id                  = data.aws_ami.ubuntu.id
   allowed_ssh_cidr        = var.allowed_ssh_cidr
   key_name                = var.key_name
@@ -126,7 +126,7 @@ module "backend_compute" {
   key_name                    = var.key_name == "" ? null : var.key_name
   subnet_id                   = module.network.private_app_subnet_ids[0]
   security_group_id           = module.security_groups.backend_security_group_id
-  associate_public_ip_address = false
+  associate_public_ip_address = true
 
   image_uri               = local.backend_image_uri
   user_data_template_path = "${path.module}/templates/user_data_backend.sh.tftpl"
@@ -153,7 +153,7 @@ module "frontend_compute" {
   key_name                    = var.key_name == "" ? null : var.key_name
   subnet_id                   = module.network.public_subnet_ids[0]
   security_group_id           = module.security_groups.frontend_security_group_id
-  associate_public_ip_address = true
+  associate_public_ip_address = false
 
   image_uri               = local.frontend_image_uri
   user_data_template_path = "${path.module}/templates/user_data_frontend.sh.tftpl"

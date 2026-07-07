@@ -889,6 +889,7 @@ http://<frontend_public_ip>
 This simplified version does **not** use:
 
 - ALB; frontend and backend run directly on EC2 instances
+- Frontend and SonarQube are intentionally internet-facing
 - ASG
 - Route 53
 - ACM

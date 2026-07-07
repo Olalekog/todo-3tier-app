@@ -10,6 +10,17 @@ on:
       - "terraform/**"
       - ".github/workflows/docker-build-push.yml"
       - ".github/workflows/deploy.yml"
+      - "terraform/security-tools/deploy/**"
+      - "terraform/templates/user_data_sonarqube.sh.tftpl"
+      - "!.github/workflows/sonarqube-deploy.yml"
+
+  workflow_run:
+    workflows:
+      - SonarQube Infrastructure Deploy
+    types:
+      - completed
+    branches:
+      - dev
 
   pull_request:
     branches:
@@ -100,7 +111,7 @@ jobs:
   resolve:
     name: Resolve Changes
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     outputs:
       environment: ${{ steps.resolve.outputs.environment }}
       workload: ${{ steps.resolve.outputs.workload }}
@@ -172,25 +183,47 @@ jobs:
             echo "Changed files:"
             echo "${CHANGED_FILES}"
 
-            BUILD_FRONTEND="false"
-            BUILD_BACKEND="false"
+            SONARQUBE_ONLY="true"
+            while IFS= read -r CHANGED_FILE; do
+              case "${CHANGED_FILE}" in
+                "")
+                  ;;
+                terraform/security-tools/deploy/*|terraform/templates/user_data_sonarqube.sh.tftpl|.github/workflows/sonarqube-deploy.yml)
+                  ;;
+                *)
+                  SONARQUBE_ONLY="false"
+                  break
+                  ;;
+              esac
+            done <<< "${CHANGED_FILES}"
 
-            if echo "${CHANGED_FILES}" | grep -Eq '^frontend/'; then
-              BUILD_FRONTEND="true"
+            if [[ "${SONARQUBE_ONLY}" == "true" ]]; then
+              BUILD_FRONTEND="false"
+              BUILD_BACKEND="false"
+              WORKLOAD="skip"
             fi
 
-            if echo "${CHANGED_FILES}" | grep -Eq '^backend/'; then
-              BUILD_BACKEND="true"
-            fi
+            if [[ "${SONARQUBE_ONLY}" != "true" ]]; then
+              BUILD_FRONTEND="false"
+              BUILD_BACKEND="false"
 
-            if [[ "${BUILD_FRONTEND}" == "true" && "${BUILD_BACKEND}" == "true" ]]; then
-              WORKLOAD="app"
-            elif [[ "${BUILD_FRONTEND}" == "true" ]]; then
-              WORKLOAD="frontend"
-            elif [[ "${BUILD_BACKEND}" == "true" ]]; then
-              WORKLOAD="backend"
-            else
-              WORKLOAD="infra"
+              if echo "${CHANGED_FILES}" | grep -Eq '^frontend/'; then
+                BUILD_FRONTEND="true"
+              fi
+
+              if echo "${CHANGED_FILES}" | grep -Eq '^backend/'; then
+                BUILD_BACKEND="true"
+              fi
+
+              if [[ "${BUILD_FRONTEND}" == "true" && "${BUILD_BACKEND}" == "true" ]]; then
+                WORKLOAD="app"
+              elif [[ "${BUILD_FRONTEND}" == "true" ]]; then
+                WORKLOAD="frontend"
+              elif [[ "${BUILD_BACKEND}" == "true" ]]; then
+                WORKLOAD="backend"
+              else
+                WORKLOAD="infra"
+              fi
             fi
           fi
 
@@ -490,7 +523,8 @@ jobs:
       always() &&
       needs.resolve.result == 'success' &&
       needs.resolve.outputs.environment == 'dev' &&
-      (needs.push.result == 'success' || needs.resolve.outputs.workload == 'infra')
+      needs.resolve.outputs.workload != 'skip' &&
+      (needs.push.result == 'success' || needs.push.result == 'skipped')
     uses: ./.github/workflows/deploy.yml
     with:
       environment: dev

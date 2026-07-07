@@ -26,7 +26,7 @@ module "sonarqube_compute" {
   key_name                    = var.key_name == "" ? null : var.key_name
   subnet_id                   = var.sonarqube_subnet_id
   security_group_id           = module.security_groups.sonarqube_security_group_id
-  associate_public_ip_address = false
+  associate_public_ip_address = true
 
   image_uri               = ""
   ecr_repository_arns     = []

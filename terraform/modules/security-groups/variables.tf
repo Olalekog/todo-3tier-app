@@ -49,7 +49,7 @@ variable "allowed_ssh_cidr" {
 }
 
 variable "sonarqube_allowed_cidr" {
-  description = "CIDR block allowed to access SonarQube web UI and SSH. Defaults to the SSH CIDR when omitted."
+  description = "CIDR block allowed to access SonarQube web UI and SSH. Defaults to the SSH CIDR when omitted and is intended for public access with a restricted CIDR."
   type        = string
   default     = ""
 }

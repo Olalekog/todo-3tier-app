@@ -9,6 +9,17 @@ on:
       - "frontend/**"
       - "backend/**"
       - ".github/workflows/security-tools.yml"
+      - "terraform/security-tools/deploy/**"
+      - "terraform/templates/user_data_sonarqube.sh.tftpl"
+      - "!.github/workflows/sonarqube-deploy.yml"
+
+  workflow_run:
+    workflows:
+      - SonarQube Infrastructure Deploy
+    types:
+      - completed
+    branches:
+      - dev
 
   workflow_call:
     inputs:
@@ -105,6 +116,7 @@ jobs:
   resolve:
     name: Resolve Security Inputs
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     outputs:
       environment: ${{ steps.resolve.outputs.environment }}
       action: ${{ steps.resolve.outputs.action }}
