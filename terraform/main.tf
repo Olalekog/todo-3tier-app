@@ -64,7 +64,7 @@ module "ecr" {
   project_name = var.project_name
   environment  = var.environment
   tags         = local.common_tags
-  depends_on = [module.security_integration]
+  depends_on   = [module.security_integration]
 }
 
 module "security_groups" {
@@ -77,7 +77,7 @@ module "security_groups" {
   allowed_ssh_cidr            = var.allowed_ssh_cidr
   backend_allowed_cidr_blocks = length(var.backend_allowed_cidr_blocks) > 0 ? var.backend_allowed_cidr_blocks : var.private_app_subnet_cidrs
   tags                        = local.common_tags
-  depends_on = [module.security_integration]
+  depends_on                  = [module.security_integration]
 }
 
 module "security_integration" {
@@ -111,7 +111,7 @@ module "database" {
   db_instance_class     = var.db_instance_class
   allocated_storage     = var.db_allocated_storage
   tags                  = local.common_tags
-  depends_on = [module.security_integration]
+  depends_on            = [module.security_integration]
 }
 
 module "backend_compute" {
@@ -137,7 +137,7 @@ module "backend_compute" {
   db_username = var.db_username
   db_password = var.db_password
 
-  tags = local.common_tags
+  tags       = local.common_tags
   depends_on = [module.security_integration]
 }
 
@@ -166,7 +166,7 @@ module "frontend_compute" {
   db_username = ""
   db_password = ""
 
-  tags = local.common_tags
+  tags       = local.common_tags
   depends_on = [module.security_integration]
 }
 
