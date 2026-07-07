@@ -20,7 +20,7 @@ on:
         description: Terraform action
         required: false
         type: string
-        default: plan
+        default: apply
       image_tag:
         description: Docker image tag for Trivy scan builds
         required: false
@@ -72,7 +72,7 @@ on:
         options:
           - plan
           - apply
-        default: plan
+        default: apply
       image_tag:
         description: Docker image tag for Trivy scan builds
         required: false
