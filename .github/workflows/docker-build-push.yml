@@ -99,53 +99,7 @@ jobs:
       name: prod
     steps:
       - name: Wait for required production reviewers
-        run: |
-          echo "This PR requires approval from production reviewers before deployment can continue."
-
-  pr-validation-complete:
-    name: PR Validation Complete
-    runs-on: ubuntu-latest
-    needs:
-      - validate-promotion-path
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref != 'prod'
-    steps:
-      - name: Stop after PR promotion validation
-        run: |
-          echo "PR validation only."
-          echo "Pull requests are only allowed from dev -> uat and uat -> prod."
-          echo "Docker build/push and Terraform deploy run from allowed branch push or manual dispatch only."
-
-  prod-approval-complete:
-    name: Production Approval Complete
-    runs-on: ubuntu-latest
-    needs:
-      - validate-promotion-path
-      - production-approval
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'prod' && github.event.pull_request.head.ref == 'uat'
-    steps:
-      - name: Confirm production approval
-        run: |
-          echo "Production promotion approved."
-          echo "The workflow can continue to deployment after this approval gate."
-
-  push-branch-guard:
-    name: Push Branch Guard
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-    steps:
-      - name: Enforce dev-only push trigger
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ "${GITHUB_REF_NAME}" != "dev" ]]; then
-            echo "Push-based workflow execution is restricted to the dev branch only."
-            echo "Pushes to uat and prod are not allowed."
-            echo "Current branch: ${GITHUB_REF_NAME}"
-            exit 1
-          fi
-
-          echo "Push branch allowed: ${GITHUB_REF_NAME}"
+        run: echo "Production approval granted."
 
   resolve:
     name: Resolve Changes
@@ -208,12 +162,6 @@ jobs:
               WORKLOAD="app"
             fi
           else
-            if [[ "${GITHUB_REF_NAME}" != "dev" ]]; then
-              echo "Push-based Docker workflow is restricted. Only pushes to the dev branch are allowed."
-              echo "Current branch: ${GITHUB_REF_NAME}"
-              exit 1
-            fi
-
             ENVIRONMENT="dev"
 
             BEFORE="${{ github.event.before }}"

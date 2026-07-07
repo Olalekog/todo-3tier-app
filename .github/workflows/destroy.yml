@@ -18,11 +18,6 @@ on:
         required: true
         type: string
 
-      image_tag:
-        description: Legacy image tag
-        required: false
-        default: latest
-
       frontend_image_tag:
         description: Frontend image tag
         required: false
@@ -32,15 +27,6 @@ on:
         description: Backend image tag
         required: false
         default: latest
-
-  push:
-    branches:
-      - dev
-      - uat
-      - prod
-      - main
-    paths:
-      - ".github/workflows/destroy.yml"
 
 permissions:
   id-token: write
@@ -53,29 +39,15 @@ env:
   BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
   TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
   TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION }}
-  APP_DIR: .
 
 jobs:
-  register-workflow:
-    name: Register Workflow
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Register only
-        run: |
-          echo "Destroy workflow registered."
-          echo "This push job does not destroy infrastructure."
-          echo "To destroy, run this workflow manually using workflow_dispatch."
-
   destroy:
     name: Destroy ${{ github.event.inputs.environment }}
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     env:
       ENVIRONMENT: ${{ github.event.inputs.environment }}
       CONFIRM_DESTROY: ${{ github.event.inputs.confirm_destroy }}
-      IMAGE_TAG: ${{ github.event.inputs.image_tag }}
       FRONTEND_IMAGE_TAG: ${{ github.event.inputs.frontend_image_tag }}
       BACKEND_IMAGE_TAG: ${{ github.event.inputs.backend_image_tag }}
       DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
@@ -110,6 +82,8 @@ jobs:
             "BOOTSTRAP_ROLE_ARN"
             "TF_STATE_BUCKET"
             "TERRAFORM_VERSION"
+            "FRONTEND_IMAGE_TAG"
+            "BACKEND_IMAGE_TAG"
             "DB_PASSWORD"
           )
 
@@ -171,7 +145,6 @@ jobs:
             -var="aws_region=${AWS_REGION}" \
             -var="project_name=${PROJECT_NAME}" \
             -var="db_password=${DB_PASSWORD}" \
-            -var="image_tag=${IMAGE_TAG}" \
             -var="frontend_image_tag=${FRONTEND_IMAGE_TAG}" \
             -var="backend_image_tag=${BACKEND_IMAGE_TAG}" \
             -out=tf-destroy-plan
