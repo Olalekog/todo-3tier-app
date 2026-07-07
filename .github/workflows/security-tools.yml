@@ -46,6 +46,11 @@ on:
         required: false
         type: boolean
         default: true
+      pr_promotion:
+        description: Set true when called from a uat/prod promotion pull request flow.
+        required: false
+        type: boolean
+        default: false
     secrets:
       DB_PASSWORD:
         required: true
@@ -98,6 +103,11 @@ on:
         required: false
         type: boolean
         default: true
+      pr_promotion:
+        description: Run as PR promotion flow (allows uat/prod security apply)
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   id-token: write
@@ -123,6 +133,7 @@ jobs:
       scan_backend: ${{ steps.resolve.outputs.scan_backend }}
       scan_source: ${{ steps.resolve.outputs.scan_source }}
       deploy_security_tools: ${{ steps.resolve.outputs.deploy_security_tools }}
+      pr_promotion: ${{ steps.resolve.outputs.pr_promotion }}
       tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
       state_key: ${{ steps.resolve.outputs.state_key }}
       aws_account_id: ${{ steps.resolve.outputs.aws_account_id }}
@@ -133,6 +144,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          EVENT_NAME="${{ github.event_name }}"
 
           RESOLVED_AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
           if [[ -z "${RESOLVED_AWS_ACCOUNT_ID}" ]]; then
@@ -152,13 +165,32 @@ jobs:
             exit 1
           fi
 
-          ENVIRONMENT="${{ inputs.environment || github.event.inputs.environment || 'dev' }}"
-          ACTION="${{ inputs.action || github.event.inputs.action || 'plan' }}"
-          IMAGE_TAG="${{ inputs.image_tag || github.event.inputs.image_tag || 'latest' }}"
-          SCAN_FRONTEND="${{ inputs.scan_frontend || github.event.inputs.scan_frontend || true }}"
-          SCAN_BACKEND="${{ inputs.scan_backend || github.event.inputs.scan_backend || true }}"
-          SCAN_SOURCE="${{ inputs.scan_source || github.event.inputs.scan_source || true }}"
-          DEPLOY_SECURITY_TOOLS="${{ inputs.deploy_security_tools || github.event.inputs.deploy_security_tools || true }}"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            ENVIRONMENT="${{ github.event.inputs.environment || 'dev' }}"
+            ACTION="${{ github.event.inputs.action || 'apply' }}"
+            IMAGE_TAG="${{ github.event.inputs.image_tag || 'latest' }}"
+            SCAN_FRONTEND="${{ github.event.inputs.scan_frontend || 'true' }}"
+            SCAN_BACKEND="${{ github.event.inputs.scan_backend || 'true' }}"
+            SCAN_SOURCE="${{ github.event.inputs.scan_source || 'true' }}"
+            DEPLOY_SECURITY_TOOLS="${{ github.event.inputs.deploy_security_tools || 'true' }}"
+            PR_PROMOTION="${{ github.event.inputs.pr_promotion || 'false' }}"
+          else
+            ENVIRONMENT="${{ inputs.environment || 'dev' }}"
+            ACTION="${{ inputs.action || 'apply' }}"
+            IMAGE_TAG="${{ inputs.image_tag || 'latest' }}"
+            SCAN_FRONTEND="${{ inputs.scan_frontend }}"
+            SCAN_BACKEND="${{ inputs.scan_backend }}"
+            SCAN_SOURCE="${{ inputs.scan_source }}"
+            DEPLOY_SECURITY_TOOLS="${{ inputs.deploy_security_tools }}"
+            PR_PROMOTION="${{ inputs.pr_promotion }}"
+          fi
+
+          # Normalize possibly-empty booleans to explicit strings for downstream job conditions.
+          SCAN_FRONTEND="${SCAN_FRONTEND:-true}"
+          SCAN_BACKEND="${SCAN_BACKEND:-true}"
+          SCAN_SOURCE="${SCAN_SOURCE:-true}"
+          DEPLOY_SECURITY_TOOLS="${DEPLOY_SECURITY_TOOLS:-true}"
+          PR_PROMOTION="${PR_PROMOTION:-false}"
 
           if [[ "${SCAN_SOURCE}" == "true" && ( -z "${{ secrets.SONAR_TOKEN }}" || -z "${{ secrets.SONAR_HOST_URL }}" ) ]]; then
             echo "SonarQube secrets missing; source scan will be skipped."
@@ -191,9 +223,19 @@ jobs:
           echo "scan_backend=${SCAN_BACKEND}" >> "$GITHUB_OUTPUT"
           echo "scan_source=${SCAN_SOURCE}" >> "$GITHUB_OUTPUT"
           echo "deploy_security_tools=${DEPLOY_SECURITY_TOOLS}" >> "$GITHUB_OUTPUT"
+          echo "pr_promotion=${PR_PROMOTION}" >> "$GITHUB_OUTPUT"
           echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
           echo "state_key=${STATE_KEY}" >> "$GITHUB_OUTPUT"
           echo "aws_account_id=${RESOLVED_AWS_ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Log resolved security inputs
+        shell: bash
+        run: |
+          echo "Resolved environment: ${{ steps.resolve.outputs.environment }}"
+          echo "Resolved action: ${{ steps.resolve.outputs.action }}"
+          echo "Resolved deploy_security_tools: ${{ steps.resolve.outputs.deploy_security_tools }}"
+          echo "Resolved pr_promotion: ${{ steps.resolve.outputs.pr_promotion }}"
+          echo "Resolved tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}"
 
   scan-terraform:
     name: Checkov Terraform Scan
@@ -315,7 +357,7 @@ jobs:
       - scan-terraform
       - scan-source
       - scan-images
-    if: always() && needs.resolve.outputs.deploy_security_tools == 'true' && needs.resolve.outputs.environment == 'dev' && needs.scan-terraform.result == 'success' && (needs.scan-source.result == 'success' || needs.scan-source.result == 'skipped') && (needs.scan-images.result == 'success' || needs.scan-images.result == 'skipped')
+    if: always() && needs.resolve.outputs.deploy_security_tools == 'true' && (needs.resolve.outputs.environment == 'dev' || (needs.resolve.outputs.pr_promotion == 'true' && (needs.resolve.outputs.environment == 'uat' || needs.resolve.outputs.environment == 'prod'))) && needs.scan-terraform.result == 'success' && (needs.scan-source.result == 'success' || needs.scan-source.result == 'skipped') && (needs.scan-images.result == 'success' || needs.scan-images.result == 'skipped')
     env:
       ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
       TFVARS_FILE: ${{ needs.resolve.outputs.tfvars_file }}
@@ -391,8 +433,8 @@ jobs:
     needs:
       - resolve
       - plan-security-tools
-    if: needs.resolve.outputs.action == 'apply' && needs.resolve.outputs.deploy_security_tools == 'true' && needs.resolve.outputs.environment == 'dev'
-    environment: ${{ needs.resolve.outputs.environment == 'prod' && 'prod' || '' }}
+    if: needs.resolve.outputs.action == 'apply' && needs.resolve.outputs.deploy_security_tools == 'true' && (needs.resolve.outputs.environment == 'dev' || (needs.resolve.outputs.pr_promotion == 'true' && (needs.resolve.outputs.environment == 'uat' || needs.resolve.outputs.environment == 'prod')))
+    environment: ${{ needs.resolve.outputs.environment }}
     env:
       STATE_KEY: ${{ needs.resolve.outputs.state_key }}
     steps:

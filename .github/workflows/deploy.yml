@@ -191,12 +191,12 @@ jobs:
     uses: ./.github/workflows/security-tools.yml
     with:
       environment: ${{ needs.resolve.outputs.environment }}
-      action: plan
+      action: apply
       image_tag: latest
       scan_frontend: false
       scan_backend: false
       scan_source: false
-      deploy_security_tools: false
+      deploy_security_tools: true
     secrets: inherit
 
   plan:

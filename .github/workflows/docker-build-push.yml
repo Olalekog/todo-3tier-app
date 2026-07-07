@@ -224,12 +224,31 @@ jobs:
     uses: ./.github/workflows/security-tools.yml
     with:
       environment: ${{ needs.resolve.outputs.environment }}
-      action: plan
+      action: apply
       image_tag: ${{ needs.resolve.outputs.image_tag }}
       scan_frontend: ${{ needs.resolve.outputs.build_frontend == 'true' }}
       scan_backend: ${{ needs.resolve.outputs.build_backend == 'true' }}
       scan_source: false
-      deploy_security_tools: false
+      deploy_security_tools: true
+      pr_promotion: false
+    secrets: inherit
+
+  security-tools-pr:
+    name: Security Tools PR Apply
+    needs:
+      - validate-promotion-path
+      - production-approval
+    if: always() && github.event_name == 'pull_request' && needs.validate-promotion-path.result == 'success' && (github.event.pull_request.base.ref != 'prod' || needs.production-approval.result == 'success')
+    uses: ./.github/workflows/security-tools.yml
+    with:
+      environment: ${{ github.event.pull_request.base.ref }}
+      action: apply
+      image_tag: ${{ github.sha }}
+      scan_frontend: false
+      scan_backend: false
+      scan_source: false
+      deploy_security_tools: true
+      pr_promotion: true
     secrets: inherit
 
   build:
