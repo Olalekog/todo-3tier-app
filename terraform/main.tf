@@ -39,6 +39,7 @@ module "kms_vpc_flow_logs" {
   source = "./modules/kms"
 
   description = "KMS key for VPC flow logs in CloudWatch"
+  aws_region  = var.aws_region
   alias_name  = "alias/${var.project_name}-${var.environment}-vpc-flow-logs"
   tags        = local.common_tags
 }

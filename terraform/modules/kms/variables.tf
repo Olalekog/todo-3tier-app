@@ -3,6 +3,11 @@ variable "description" {
   type        = string
 }
 
+variable "aws_region" {
+  description = "AWS region used for region-scoped service principal conditions."
+  type        = string
+}
+
 variable "alias_name" {
   description = "Optional alias for the KMS key, e.g. alias/my-key."
   type        = string
