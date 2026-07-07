@@ -60,6 +60,15 @@ resource "aws_db_instance" "this" {
 
   storage_encrypted = true
 
+  lifecycle {
+    # Avoid repeated no-op modify cycles caused by AWS-managed patching or
+    # externally-rotated credentials when these are not intentional infra changes.
+    ignore_changes = [
+      engine_version,
+      password,
+    ]
+  }
+
   tags = merge(var.tags, {
     Name = "${var.project_name}-${var.environment}-mysql"
     Tier = "database"

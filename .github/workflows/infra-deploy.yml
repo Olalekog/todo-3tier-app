@@ -9,9 +9,6 @@ on:
       - ".github/workflows/infra-deploy.yml"
       - ".github/workflows/deploy.yml"
       - ".github/workflows/security-tools.yml"
-      - "terraform/security-tools/deploy/**"
-      - "terraform/templates/user_data_sonarqube.sh.tftpl"
-      - "!.github/workflows/sonarqube-deploy.yml"
 
   workflow_dispatch:
     inputs:
