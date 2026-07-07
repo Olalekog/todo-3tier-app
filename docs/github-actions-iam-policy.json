@@ -112,6 +112,28 @@
         "rds:ListTagsForResource"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "AllowKMSForTerraformManagedKeys",
+      "Effect": "Allow",
+      "Action": [
+        "kms:CreateKey",
+        "kms:DescribeKey",
+        "kms:EnableKeyRotation",
+        "kms:DisableKeyRotation",
+        "kms:PutKeyPolicy",
+        "kms:GetKeyPolicy",
+        "kms:ScheduleKeyDeletion",
+        "kms:CancelKeyDeletion",
+        "kms:CreateAlias",
+        "kms:DeleteAlias",
+        "kms:UpdateAlias",
+        "kms:ListAliases",
+        "kms:ListResourceTags",
+        "kms:TagResource",
+        "kms:UntagResource"
+      ],
+      "Resource": "*"
     }
   ]
 }
