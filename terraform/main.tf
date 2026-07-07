@@ -153,7 +153,7 @@ module "frontend_compute" {
   key_name                    = var.key_name == "" ? null : var.key_name
   subnet_id                   = module.network.public_subnet_ids[0]
   security_group_id           = module.security_groups.frontend_security_group_id
-  associate_public_ip_address = false
+  associate_public_ip_address = true
 
   image_uri               = local.frontend_image_uri
   user_data_template_path = "${path.module}/templates/user_data_frontend.sh.tftpl"
