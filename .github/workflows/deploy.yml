@@ -249,6 +249,22 @@ jobs:
             ${TARGET_ARGS} \
             -out=tfplan
 
+      - name: Show DB plan changes
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform show -json tfplan > tfplan.json
+
+          DB_CHANGES="$(jq -r '.resource_changes[]? | select(.address == "module.database.aws_db_instance.this") | .change.actions | join(",")' tfplan.json)"
+
+          if [[ -n "${DB_CHANGES}" ]]; then
+            echo "Database resource actions: ${DB_CHANGES}"
+            jq -r '.resource_changes[]? | select(.address == "module.database.aws_db_instance.this") | {address, actions: .change.actions, before: .change.before, after: .change.after, after_unknown: .change.after_unknown}' tfplan.json
+          else
+            echo "No database changes in this plan."
+          fi
+
       - name: Upload Terraform plan
         uses: actions/upload-artifact@v4
         with:
