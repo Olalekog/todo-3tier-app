@@ -477,3 +477,15 @@ jobs:
         run: |
           set -euo pipefail
           terraform apply -auto-approve security-tools-tfplan
+
+      - name: Show SonarQube deployment output
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          if terraform output -raw sonarqube_url >/tmp/sonarqube_url 2>/dev/null; then
+            echo "SonarQube URL: $(cat /tmp/sonarqube_url)"
+          else
+            echo "SonarQube URL is not available in state yet."
+            terraform output || true
+          fi
