@@ -143,8 +143,3 @@ variable "sonarqube_version" {
   default     = "10.4.1.88267"
 }
 
-variable "enable_alb" {
-  description = "Enable Application Load Balancer resources."
-  type        = bool
-  default     = false
-}

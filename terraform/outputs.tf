@@ -23,7 +23,3 @@ output "sonarqube_url" {
   value       = module.security_integration.sonarqube_url
 }
 
-output "alb_dns_name" {
-  description = "ALB DNS name when enable_alb = true."
-  value       = module.alb.alb_dns_name
-}

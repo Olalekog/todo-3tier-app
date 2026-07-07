@@ -53,7 +53,7 @@ variable "engine_version" {
 variable "multi_az" {
   description = "Enable Multi-AZ deployment."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "backup_retention_period" {
@@ -71,7 +71,7 @@ variable "skip_final_snapshot" {
 variable "deletion_protection" {
   description = "Enable deletion protection."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "tags" {

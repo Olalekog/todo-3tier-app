@@ -116,6 +116,7 @@ module "backend_compute" {
 
   image_uri               = local.backend_image_uri
   user_data_template_path = "${path.module}/templates/user_data_backend.sh.tftpl"
+  ecr_repository_arns     = [module.ecr.backend_repository_arn]
 
   db_host     = module.database.db_address
   db_name     = var.db_name
@@ -141,6 +142,7 @@ module "frontend_compute" {
 
   image_uri               = local.frontend_image_uri
   user_data_template_path = "${path.module}/templates/user_data_frontend.sh.tftpl"
+  ecr_repository_arns     = [module.ecr.frontend_repository_arn]
 
   backend_private_ip = module.backend_compute.private_ip
 
@@ -152,16 +154,4 @@ module "frontend_compute" {
   tags = local.common_tags
 }
 
-module "alb" {
-  source = "./modules/alb"
-
-  project_name          = var.project_name
-  environment           = var.environment
-  vpc_id                = module.network.vpc_id
-  public_subnet_ids     = module.network.public_subnet_ids
-  alb_security_group_id = module.security_groups.alb_security_group_id
-  frontend_instance_id  = module.frontend_compute.instance_id
-  enable_alb            = var.enable_alb
-  tags                  = local.common_tags
-}
 

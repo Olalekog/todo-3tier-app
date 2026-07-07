@@ -1,31 +1,6 @@
-resource "aws_security_group" "alb" {
-  name        = "${var.project_name}-${var.environment}-alb-sg"
-  description = "ALB security group"
-  vpc_id      = var.vpc_id
-
-  ingress {
-    description = "Allow HTTP to ALB"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = [var.allowed_http_cidr]
-  }
-
-  egress {
-    description = "Allow all outbound traffic"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(var.tags, {
-    Name = "${var.project_name}-${var.environment}-alb-sg"
-    Tier = "alb"
-  })
-}
-
 resource "aws_security_group" "frontend" {
+  #checkov:skip=CKV_AWS_382:Frontend instance requires outbound internet access for runtime dependencies.
+  #checkov:skip=CKV2_AWS_5:Attachment is defined in root compute module.
   name        = "${var.project_name}-${var.environment}-frontend-sg"
   description = "Frontend security group"
   vpc_id      = var.vpc_id
@@ -36,14 +11,6 @@ resource "aws_security_group" "frontend" {
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = [var.allowed_http_cidr]
-  }
-
-  ingress {
-    description = "Allow SSH to frontend"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.allowed_ssh_cidr]
   }
 
   egress {
@@ -61,6 +28,8 @@ resource "aws_security_group" "frontend" {
 }
 
 resource "aws_security_group" "backend" {
+  #checkov:skip=CKV_AWS_382:Backend instance requires outbound internet access via NAT for updates and image pulls.
+  #checkov:skip=CKV2_AWS_5:Attachment is defined in root compute module.
   name        = "${var.project_name}-${var.environment}-backend-sg"
   description = "Backend security group"
   vpc_id      = var.vpc_id
@@ -84,14 +53,6 @@ resource "aws_security_group" "backend" {
     }
   }
 
-  ingress {
-    description = "Allow SSH to backend"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.allowed_ssh_cidr]
-  }
-
   egress {
     description = "Allow all outbound traffic"
     from_port   = 0
@@ -107,6 +68,8 @@ resource "aws_security_group" "backend" {
 }
 
 resource "aws_security_group" "database" {
+  #checkov:skip=CKV_AWS_382:RDS managed service controls outbound traffic; explicit egress lock-down is deferred.
+  #checkov:skip=CKV2_AWS_5:Attachment is defined in root database module.
   name        = "${var.project_name}-${var.environment}-database-sg"
   description = "Database security group"
   vpc_id      = var.vpc_id

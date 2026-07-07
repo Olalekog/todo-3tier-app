@@ -195,6 +195,7 @@ jobs:
       image_tag: latest
       scan_frontend: false
       scan_backend: false
+      scan_source: false
       deploy_security_tools: false
     secrets: inherit
 

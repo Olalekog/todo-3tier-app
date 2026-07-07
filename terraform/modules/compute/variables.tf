@@ -55,6 +55,12 @@ variable "image_uri" {
   type        = string
 }
 
+variable "ecr_repository_arns" {
+  description = "Allowed ECR repository ARNs for image pull actions."
+  type        = list(string)
+  default     = []
+}
+
 variable "user_data_template_path" {
   description = "Path to the user data template file."
   type        = string

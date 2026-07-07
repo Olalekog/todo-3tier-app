@@ -38,7 +38,7 @@ resource "aws_iam_role_policy" "ecr_read" {
           "ecr:DescribeRepositories",
           "ecr:GetDownloadUrlForLayer"
         ]
-        Resource = "*"
+        Resource = var.ecr_repository_arns
       }
     ]
   })
@@ -74,6 +74,17 @@ resource "aws_instance" "this" {
   associate_public_ip_address = var.associate_public_ip_address
   key_name                    = var.key_name
   iam_instance_profile        = aws_iam_instance_profile.this.name
+  ebs_optimized               = true
+  monitoring                  = true
+
+  metadata_options {
+    http_tokens = "required"
+  }
+
+  root_block_device {
+    encrypted   = true
+    volume_type = "gp3"
+  }
 
   user_data                   = local.rendered_user_data
   user_data_replace_on_change = true

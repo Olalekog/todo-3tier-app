@@ -17,3 +17,13 @@ output "backend_repository_name" {
   description = "Backend ECR repository name."
   value       = aws_ecr_repository.backend.name
 }
+
+output "frontend_repository_arn" {
+  description = "Frontend ECR repository ARN."
+  value       = aws_ecr_repository.frontend.arn
+}
+
+output "backend_repository_arn" {
+  description = "Backend ECR repository ARN."
+  value       = aws_ecr_repository.backend.arn
+}
