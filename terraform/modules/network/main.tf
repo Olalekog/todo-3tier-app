@@ -21,7 +21,8 @@ resource "aws_default_security_group" "default" {
 
 resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
   name              = "/aws/vpc/${var.project_name}-${var.environment}-flow-logs"
-  retention_in_days = 30
+  retention_in_days = 365
+  kms_key_id        = var.vpc_flow_logs_kms_key_arn
 
   tags = merge(var.tags, {
     Name = "${var.project_name}-${var.environment}-vpc-flow-logs"
@@ -57,13 +58,24 @@ resource "aws_iam_role_policy" "vpc_flow_logs" {
       {
         Effect = "Allow"
         Action = [
-          "logs:CreateLogGroup",
           "logs:CreateLogStream",
-          "logs:PutLogEvents",
+          "logs:PutLogEvents"
+        ]
+        Resource = [
+          aws_cloudwatch_log_group.vpc_flow_logs.arn,
+          "${aws_cloudwatch_log_group.vpc_flow_logs.arn}:*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "logs:DescribeLogGroups",
           "logs:DescribeLogStreams"
         ]
-        Resource = "*"
+        Resource = [
+          aws_cloudwatch_log_group.vpc_flow_logs.arn,
+          "${aws_cloudwatch_log_group.vpc_flow_logs.arn}:*"
+        ]
       }
     ]
   })

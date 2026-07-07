@@ -69,3 +69,13 @@ moved {
   from = module.security_groups.module.deploy.aws_security_group.database
   to   = module.security_groups.aws_security_group.database
 }
+
+moved {
+  from = module.network.aws_kms_key.vpc_flow_logs
+  to   = module.kms_vpc_flow_logs.aws_kms_key.this
+}
+
+moved {
+  from = module.network.aws_kms_alias.vpc_flow_logs
+  to   = module.kms_vpc_flow_logs.aws_kms_alias.this[0]
+}

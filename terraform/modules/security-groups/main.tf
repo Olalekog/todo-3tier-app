@@ -1,4 +1,5 @@
 resource "aws_security_group" "frontend" {
+  #checkov:skip=CKV_AWS_260:Single-instance frontend is intentionally internet-facing on HTTP.
   #checkov:skip=CKV_AWS_382:Frontend instance requires outbound internet access for runtime dependencies.
   #checkov:skip=CKV2_AWS_5:Attachment is defined in root compute module.
   name        = "${var.project_name}-${var.environment}-frontend-sg"
