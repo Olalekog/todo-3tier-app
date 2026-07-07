@@ -7,9 +7,7 @@ on:
     paths:
       - "frontend/**"
       - "backend/**"
-      - "terraform/**"
       - ".github/workflows/docker-build-push.yml"
-      - ".github/workflows/deploy.yml"
 
   pull_request:
     branches:
@@ -172,47 +170,25 @@ jobs:
             echo "Changed files:"
             echo "${CHANGED_FILES}"
 
-            SONARQUBE_ONLY="true"
-            while IFS= read -r CHANGED_FILE; do
-              case "${CHANGED_FILE}" in
-                "")
-                  ;;
-                terraform/security-tools/deploy/*|terraform/templates/user_data_sonarqube.sh.tftpl|terraform/main.tf|terraform/outputs.tf|.github/workflows/sonarqube-deploy.yml)
-                  ;;
-                *)
-                  SONARQUBE_ONLY="false"
-                  break
-                  ;;
-              esac
-            done <<< "${CHANGED_FILES}"
+            BUILD_FRONTEND="false"
+            BUILD_BACKEND="false"
 
-            if [[ "${SONARQUBE_ONLY}" == "true" ]]; then
-              BUILD_FRONTEND="false"
-              BUILD_BACKEND="false"
-              WORKLOAD="skip"
+            if echo "${CHANGED_FILES}" | grep -Eq '^frontend/'; then
+              BUILD_FRONTEND="true"
             fi
 
-            if [[ "${SONARQUBE_ONLY}" != "true" ]]; then
-              BUILD_FRONTEND="false"
-              BUILD_BACKEND="false"
+            if echo "${CHANGED_FILES}" | grep -Eq '^backend/'; then
+              BUILD_BACKEND="true"
+            fi
 
-              if echo "${CHANGED_FILES}" | grep -Eq '^frontend/'; then
-                BUILD_FRONTEND="true"
-              fi
-
-              if echo "${CHANGED_FILES}" | grep -Eq '^backend/'; then
-                BUILD_BACKEND="true"
-              fi
-
-              if [[ "${BUILD_FRONTEND}" == "true" && "${BUILD_BACKEND}" == "true" ]]; then
-                WORKLOAD="app"
-              elif [[ "${BUILD_FRONTEND}" == "true" ]]; then
-                WORKLOAD="frontend"
-              elif [[ "${BUILD_BACKEND}" == "true" ]]; then
-                WORKLOAD="backend"
-              else
-                WORKLOAD="infra"
-              fi
+            if [[ "${BUILD_FRONTEND}" == "true" && "${BUILD_BACKEND}" == "true" ]]; then
+              WORKLOAD="app"
+            elif [[ "${BUILD_FRONTEND}" == "true" ]]; then
+              WORKLOAD="frontend"
+            elif [[ "${BUILD_BACKEND}" == "true" ]]; then
+              WORKLOAD="backend"
+            else
+              WORKLOAD="skip"
             fi
           fi
 
@@ -521,5 +497,4 @@ jobs:
       workload: ${{ needs.resolve.outputs.workload }}
       frontend_image_tag: ${{ needs.resolve.outputs.frontend_image_tag }}
       backend_image_tag: ${{ needs.resolve.outputs.backend_image_tag }}
-      allow_replacement: false
     secrets: inherit

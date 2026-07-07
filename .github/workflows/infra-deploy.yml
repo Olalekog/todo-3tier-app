@@ -1,0 +1,54 @@
+name: Infrastructure Deploy
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - "terraform/**"
+      - ".github/workflows/infra-deploy.yml"
+      - ".github/workflows/deploy.yml"
+      - ".github/workflows/security-tools.yml"
+      - "terraform/security-tools/deploy/**"
+      - "terraform/templates/user_data_sonarqube.sh.tftpl"
+      - "!.github/workflows/sonarqube-deploy.yml"
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment
+        required: true
+        type: choice
+        options:
+          - dev
+          - uat
+          - prod
+        default: dev
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  security-tools:
+    name: Security Tools Gate
+    uses: ./.github/workflows/security-tools.yml
+    with:
+      environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'dev' }}
+      action: apply
+      image_tag: ${{ github.sha }}
+      scan_frontend: false
+      scan_backend: false
+      scan_source: false
+    secrets: inherit
+
+  deploy-infra:
+    name: Deploy Infrastructure
+    needs:
+      - security-tools
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'dev' }}
+      action: apply
+      workload: infra
+    secrets: inherit
