@@ -36,6 +36,11 @@ on:
         required: false
         type: boolean
         default: true
+      scan_source:
+        description: Run SonarQube source scan
+        required: false
+        type: boolean
+        default: true
       deploy_security_tools:
         description: Plan/apply security integration infrastructure
         required: false
@@ -45,9 +50,9 @@ on:
       DB_PASSWORD:
         required: true
       SONAR_TOKEN:
-        required: true
+        required: false
       SONAR_HOST_URL:
-        required: true
+        required: false
 
   workflow_dispatch:
     inputs:
@@ -83,6 +88,11 @@ on:
         required: false
         type: boolean
         default: true
+      scan_source:
+        description: Run SonarQube source scan
+        required: false
+        type: boolean
+        default: true
       deploy_security_tools:
         description: Plan/apply security integration infrastructure
         required: false
@@ -111,6 +121,7 @@ jobs:
       image_tag: ${{ steps.resolve.outputs.image_tag }}
       scan_frontend: ${{ steps.resolve.outputs.scan_frontend }}
       scan_backend: ${{ steps.resolve.outputs.scan_backend }}
+      scan_source: ${{ steps.resolve.outputs.scan_source }}
       deploy_security_tools: ${{ steps.resolve.outputs.deploy_security_tools }}
       tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
       state_key: ${{ steps.resolve.outputs.state_key }}
@@ -141,17 +152,18 @@ jobs:
             exit 1
           fi
 
-          if [[ -z "${{ secrets.SONAR_TOKEN }}" || -z "${{ secrets.SONAR_HOST_URL }}" ]]; then
-            echo "Missing required SonarQube secrets: SONAR_TOKEN or SONAR_HOST_URL"
-            exit 1
-          fi
-
           ENVIRONMENT="${{ inputs.environment || github.event.inputs.environment || 'dev' }}"
           ACTION="${{ inputs.action || github.event.inputs.action || 'plan' }}"
           IMAGE_TAG="${{ inputs.image_tag || github.event.inputs.image_tag || 'latest' }}"
           SCAN_FRONTEND="${{ inputs.scan_frontend || github.event.inputs.scan_frontend || true }}"
           SCAN_BACKEND="${{ inputs.scan_backend || github.event.inputs.scan_backend || true }}"
+          SCAN_SOURCE="${{ inputs.scan_source || github.event.inputs.scan_source || true }}"
           DEPLOY_SECURITY_TOOLS="${{ inputs.deploy_security_tools || github.event.inputs.deploy_security_tools || true }}"
+
+          if [[ "${SCAN_SOURCE}" == "true" && ( -z "${{ secrets.SONAR_TOKEN }}" || -z "${{ secrets.SONAR_HOST_URL }}" ) ]]; then
+            echo "SonarQube secrets missing; source scan will be skipped."
+            SCAN_SOURCE="false"
+          fi
 
           case "${ENVIRONMENT}" in
             dev|uat|prod) ;;
@@ -177,6 +189,7 @@ jobs:
           echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "scan_frontend=${SCAN_FRONTEND}" >> "$GITHUB_OUTPUT"
           echo "scan_backend=${SCAN_BACKEND}" >> "$GITHUB_OUTPUT"
+          echo "scan_source=${SCAN_SOURCE}" >> "$GITHUB_OUTPUT"
           echo "deploy_security_tools=${DEPLOY_SECURITY_TOOLS}" >> "$GITHUB_OUTPUT"
           echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
           echo "state_key=${STATE_KEY}" >> "$GITHUB_OUTPUT"
@@ -204,6 +217,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - resolve
+    if: needs.resolve.outputs.scan_source == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -299,7 +313,7 @@ jobs:
       - scan-terraform
       - scan-source
       - scan-images
-    if: always() && needs.resolve.outputs.deploy_security_tools == 'true' && needs.scan-terraform.result == 'success' && needs.scan-source.result == 'success' && (needs.scan-images.result == 'success' || needs.scan-images.result == 'skipped')
+    if: always() && needs.resolve.outputs.deploy_security_tools == 'true' && needs.scan-terraform.result == 'success' && (needs.scan-source.result == 'success' || needs.scan-source.result == 'skipped') && (needs.scan-images.result == 'success' || needs.scan-images.result == 'skipped')
     env:
       ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
       TFVARS_FILE: ${{ needs.resolve.outputs.tfvars_file }}
