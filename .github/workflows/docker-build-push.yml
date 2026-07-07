@@ -177,7 +177,7 @@ jobs:
               case "${CHANGED_FILE}" in
                 "")
                   ;;
-                terraform/security-tools/deploy/*|terraform/templates/user_data_sonarqube.sh.tftpl|.github/workflows/sonarqube-deploy.yml)
+                terraform/security-tools/deploy/*|terraform/templates/user_data_sonarqube.sh.tftpl|terraform/main.tf|terraform/outputs.tf|.github/workflows/sonarqube-deploy.yml)
                   ;;
                 *)
                   SONARQUBE_ONLY="false"
