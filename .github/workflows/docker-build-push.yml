@@ -47,14 +47,12 @@ permissions:
   id-token: write
   contents: read
   pull-requests: read
-  actions: read
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
   PROJECT_NAME: ${{ vars.PROJECT_NAME }}
   BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
-  APP_DIR: .
 
 jobs:
   validate-promotion-path:
@@ -451,12 +449,16 @@ jobs:
           docker push "${IMAGE_SHA}"
           docker push "${IMAGE_LATEST}"
 
-  deploy-dev:
-    name: Deploy Dev Workload With New Image
+  deploy:
+    name: Deploy to Dev
     needs:
       - resolve
       - push
-    if: always() && needs.resolve.result == 'success' && needs.push.result == 'success' && needs.resolve.outputs.environment == 'dev' && (needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true')
+    if: |
+      always() &&
+      needs.resolve.result == 'success' &&
+      needs.resolve.outputs.environment == 'dev' &&
+      (needs.push.result == 'success' || needs.resolve.outputs.workload == 'infra')
     uses: ./.github/workflows/deploy.yml
     with:
       environment: dev
@@ -464,20 +466,5 @@ jobs:
       workload: ${{ needs.resolve.outputs.workload }}
       frontend_image_tag: ${{ needs.resolve.outputs.frontend_image_tag }}
       backend_image_tag: ${{ needs.resolve.outputs.backend_image_tag }}
-      allow_replacement: false
-    secrets: inherit
-
-  deploy-dev-infra-only:
-    name: Deploy Dev Infrastructure Only
-    needs:
-      - resolve
-    if: always() && needs.resolve.result == 'success' && needs.resolve.outputs.environment == 'dev' && needs.resolve.outputs.workload == 'infra'
-    uses: ./.github/workflows/deploy.yml
-    with:
-      environment: dev
-      action: apply
-      workload: infra
-      frontend_image_tag: latest
-      backend_image_tag: latest
       allow_replacement: false
     secrets: inherit

@@ -274,13 +274,14 @@ jobs:
             terraform/tfplan.json
           if-no-files-found: error
 
-  apply-nonprod:
-    name: Terraform Apply Non-Prod
+  apply:
+    name: Terraform Apply
     needs:
       - resolve
       - plan
-    if: needs.resolve.outputs.action == 'apply' && needs.resolve.outputs.environment != 'prod'
+    if: needs.resolve.outputs.action == 'apply'
     runs-on: ubuntu-latest
+    environment: ${{ needs.resolve.outputs.environment == 'prod' && 'prod' || '' }}
     env:
       STATE_KEY: ${{ needs.resolve.outputs.state_key }}
 
@@ -294,58 +295,6 @@ jobs:
           role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActionsTerraformApply
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-          terraform_wrapper: false
-
-      - name: Terraform init
-        working-directory: terraform
-        shell: bash
-        run: |
-          set -euo pipefail
-          terraform init \
-            -backend-config="bucket=${TF_STATE_BUCKET}" \
-            -backend-config="key=${STATE_KEY}" \
-            -backend-config="region=${AWS_REGION}" \
-            -backend-config="encrypt=true"
-
-      - name: Download Terraform plan
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-plan-${{ needs.resolve.outputs.environment }}
-          path: terraform
-
-      - name: Terraform apply
-        working-directory: terraform
-        shell: bash
-        run: |
-          set -euo pipefail
-          terraform apply -auto-approve tfplan
-
-  apply-prod:
-    name: Terraform Apply Prod
-    needs:
-      - resolve
-      - plan
-    if: needs.resolve.outputs.action == 'apply' && needs.resolve.outputs.environment == 'prod'
-    runs-on: ubuntu-latest
-    environment: prod
-    env:
-      STATE_KEY: ${{ needs.resolve.outputs.state_key }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials using GitHub OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActionsTerraformApplyProd
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
