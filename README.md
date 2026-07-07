@@ -888,7 +888,7 @@ http://<frontend_public_ip>
 
 This simplified version does **not** use:
 
-- ALB
+- ALB; frontend and backend run directly on EC2 instances
 - ASG
 - Route 53
 - ACM

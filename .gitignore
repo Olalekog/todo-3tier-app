@@ -7,7 +7,7 @@ crash.log
 crash.*.log
 *.tfvars
 !terraform.tfvars.example
-!terraform/modules/security-tools/deploy/sonarqube.tfvars
+!terraform/security-tools/deploy/sonarqube.tfvars
 
 # Local environment files
 .env

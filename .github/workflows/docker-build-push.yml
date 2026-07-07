@@ -229,8 +229,6 @@ jobs:
       scan_frontend: ${{ needs.resolve.outputs.build_frontend == 'true' }}
       scan_backend: ${{ needs.resolve.outputs.build_backend == 'true' }}
       scan_source: false
-      deploy_security_tools: true
-      pr_promotion: false
     secrets: inherit
 
   security-tools-pr:
@@ -247,8 +245,6 @@ jobs:
       scan_frontend: false
       scan_backend: false
       scan_source: false
-      deploy_security_tools: true
-      pr_promotion: true
     secrets: inherit
 
   build:

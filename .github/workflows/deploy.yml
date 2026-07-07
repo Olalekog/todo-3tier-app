@@ -184,26 +184,10 @@ jobs:
           echo "target_args=${TARGET_ARGS}" >> "$GITHUB_OUTPUT"
           echo "allow_replacement=${ALLOW_REPLACEMENT}" >> "$GITHUB_OUTPUT"
 
-  security-tools:
-    name: Security Tools Gate
-    needs:
-      - resolve
-    uses: ./.github/workflows/security-tools.yml
-    with:
-      environment: ${{ needs.resolve.outputs.environment }}
-      action: apply
-      image_tag: latest
-      scan_frontend: false
-      scan_backend: false
-      scan_source: false
-      deploy_security_tools: true
-    secrets: inherit
-
   plan:
     name: Terraform Validate and Plan
     needs:
       - resolve
-      - security-tools
     runs-on: ubuntu-latest
     outputs:
       change_count: ${{ steps.plan_json.outputs.change_count }}

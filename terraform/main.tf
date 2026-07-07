@@ -81,7 +81,7 @@ module "security_groups" {
 }
 
 module "security_integration" {
-  source = "./modules/security-tools/deploy"
+  source = "./security-tools/deploy"
 
   project_name            = var.project_name
   environment             = var.environment

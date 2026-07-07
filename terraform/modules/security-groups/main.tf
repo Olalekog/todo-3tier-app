@@ -1,4 +1,9 @@
+locals {
+  sonarqube_allowed_cidr = var.sonarqube_allowed_cidr != "" ? var.sonarqube_allowed_cidr : var.allowed_ssh_cidr
+}
+
 resource "aws_security_group" "frontend" {
+  count = var.enable_frontend ? 1 : 0
   #checkov:skip=CKV_AWS_260:Single-instance frontend is intentionally internet-facing on HTTP.
   #checkov:skip=CKV_AWS_382:Frontend instance requires outbound internet access for runtime dependencies.
   #checkov:skip=CKV2_AWS_5:Attachment is defined in root compute module.
@@ -29,6 +34,7 @@ resource "aws_security_group" "frontend" {
 }
 
 resource "aws_security_group" "backend" {
+  count = var.enable_backend ? 1 : 0
   #checkov:skip=CKV_AWS_382:Backend instance requires outbound internet access via NAT for updates and image pulls.
   #checkov:skip=CKV2_AWS_5:Attachment is defined in root compute module.
   name        = "${var.project_name}-${var.environment}-backend-sg"
@@ -40,7 +46,7 @@ resource "aws_security_group" "backend" {
     from_port       = 8000
     to_port         = 8000
     protocol        = "tcp"
-    security_groups = [aws_security_group.frontend.id]
+    security_groups = [aws_security_group.frontend[0].id]
   }
 
   dynamic "ingress" {
@@ -69,6 +75,7 @@ resource "aws_security_group" "backend" {
 }
 
 resource "aws_security_group" "database" {
+  count = var.enable_database ? 1 : 0
   #checkov:skip=CKV_AWS_382:RDS managed service controls outbound traffic; explicit egress lock-down is deferred.
   #checkov:skip=CKV2_AWS_5:Attachment is defined in root database module.
   name        = "${var.project_name}-${var.environment}-database-sg"
@@ -80,7 +87,7 @@ resource "aws_security_group" "database" {
     from_port       = 3306
     to_port         = 3306
     protocol        = "tcp"
-    security_groups = [aws_security_group.backend.id]
+    security_groups = [aws_security_group.backend[0].id]
   }
 
   egress {
@@ -94,5 +101,41 @@ resource "aws_security_group" "database" {
   tags = merge(var.tags, {
     Name = "${var.project_name}-${var.environment}-database-sg"
     Tier = "database"
+  })
+}
+
+resource "aws_security_group" "sonarqube" {
+  count       = var.enable_sonarqube ? 1 : 0
+  name        = "${var.project_name}-${var.environment}-sonarqube-sg"
+  description = "SonarQube security group"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description = "SonarQube web UI from allowed CIDR"
+    from_port   = 9000
+    to_port     = 9000
+    protocol    = "tcp"
+    cidr_blocks = [local.sonarqube_allowed_cidr]
+  }
+
+  ingress {
+    description = "SSH from allowed CIDR"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [local.sonarqube_allowed_cidr]
+  }
+
+  egress {
+    description = "Allow all outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-${var.environment}-sonarqube-sg"
+    Tier = "tools"
   })
 }

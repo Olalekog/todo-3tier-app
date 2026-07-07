@@ -1,42 +1,21 @@
-resource "aws_security_group" "sonarqube" {
-  count       = var.enable_sonarqube ? 1 : 0
-  name        = "${var.project_name}-${var.environment}-sonarqube-sg"
-  description = "SonarQube server"
-  vpc_id      = var.vpc_id
+module "security_groups" {
+  source = "../../modules/security-groups"
 
-  ingress {
-    description = "SonarQube web UI from admin CIDR"
-    from_port   = 9000
-    to_port     = 9000
-    protocol    = "tcp"
-    cidr_blocks = [var.allowed_ssh_cidr]
-  }
-
-  ingress {
-    description = "SSH from admin CIDR"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.allowed_ssh_cidr]
-  }
-
-  egress {
-    description = "Allow all outbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(var.tags, {
-    Name = "${var.project_name}-${var.environment}-sonarqube-sg"
-    Tier = "tools"
-  })
+  project_name           = var.project_name
+  environment            = var.environment
+  vpc_id                 = var.vpc_id
+  allowed_ssh_cidr       = var.allowed_ssh_cidr
+  sonarqube_allowed_cidr = var.allowed_ssh_cidr
+  enable_frontend        = false
+  enable_backend         = false
+  enable_database        = false
+  enable_sonarqube       = var.enable_sonarqube
+  tags                   = var.tags
 }
 
 module "sonarqube_compute" {
   count  = var.enable_sonarqube ? 1 : 0
-  source = "../../compute"
+  source = "../../modules/compute"
 
   project_name                = var.project_name
   environment                 = var.environment
@@ -46,7 +25,7 @@ module "sonarqube_compute" {
   instance_type               = var.sonarqube_instance_type
   key_name                    = var.key_name == "" ? null : var.key_name
   subnet_id                   = var.sonarqube_subnet_id
-  security_group_id           = aws_security_group.sonarqube[0].id
+  security_group_id           = module.security_groups.sonarqube_security_group_id
   associate_public_ip_address = false
 
   image_uri               = ""

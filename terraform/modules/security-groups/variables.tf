@@ -19,9 +19,39 @@ variable "allowed_http_cidr" {
   default     = "0.0.0.0/0"
 }
 
+variable "enable_frontend" {
+  description = "Create the frontend security group."
+  type        = bool
+  default     = true
+}
+
+variable "enable_backend" {
+  description = "Create the backend security group."
+  type        = bool
+  default     = true
+}
+
+variable "enable_database" {
+  description = "Create the database security group."
+  type        = bool
+  default     = true
+}
+
+variable "enable_sonarqube" {
+  description = "Create the SonarQube security group."
+  type        = bool
+  default     = false
+}
+
 variable "allowed_ssh_cidr" {
   description = "CIDR block allowed to access EC2 instances over SSH. Use your public IP with /32."
   type        = string
+}
+
+variable "sonarqube_allowed_cidr" {
+  description = "CIDR block allowed to access SonarQube web UI and SSH. Defaults to the SSH CIDR when omitted."
+  type        = string
+  default     = ""
 }
 
 variable "backend_allowed_cidr_blocks" {
