@@ -1,8 +1,3 @@
-output "alb_security_group_id" {
-  description = "ALB security group ID."
-  value       = aws_security_group.alb.id
-}
-
 output "frontend_security_group_id" {
   description = "Frontend security group ID."
   value       = aws_security_group.frontend.id

@@ -93,8 +93,6 @@ jobs:
     needs:
       - validate-promotion-path
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'prod' && github.event.pull_request.head.ref == 'uat'
-    environment:
-      name: prod
     steps:
       - name: Wait for required production reviewers
         run: echo "Production approval granted."
@@ -218,11 +216,27 @@ jobs:
           echo "backend_image_tag=${BACKEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "aws_account_id=${RESOLVED_AWS_ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
 
+  security-tools:
+    name: Security Tools Gate
+    needs:
+      - resolve
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/security-tools.yml
+    with:
+      environment: ${{ needs.resolve.outputs.environment }}
+      action: plan
+      image_tag: ${{ needs.resolve.outputs.image_tag }}
+      scan_frontend: ${{ needs.resolve.outputs.build_frontend == 'true' }}
+      scan_backend: ${{ needs.resolve.outputs.build_backend == 'true' }}
+      deploy_security_tools: false
+    secrets: inherit
+
   build:
     name: Build Images
     runs-on: ubuntu-latest
     needs:
       - resolve
+      - security-tools
     if: needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true'
     env:
       ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
@@ -370,6 +384,7 @@ jobs:
     needs:
       - resolve
       - test
+      - security-tools
     if: needs.resolve.outputs.build_frontend == 'true' || needs.resolve.outputs.build_backend == 'true'
     env:
       ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
@@ -454,6 +469,7 @@ jobs:
     needs:
       - resolve
       - push
+      - security-tools
     if: |
       always() &&
       needs.resolve.result == 'success' &&

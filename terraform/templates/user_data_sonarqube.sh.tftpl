@@ -1,0 +1,55 @@
+#!/bin/bash
+set -euo pipefail
+
+exec > >(tee /var/log/user-data-sonarqube.log | logger -t user-data-sonarqube -s 2>/dev/console) 2>&1
+
+SONARQUBE_VERSION="${sonarqube_version}"
+SONAR_HOME="/opt/sonarqube"
+
+echo "Installing SonarQube $${SONARQUBE_VERSION}..."
+
+apt-get update -y
+apt-get install -y openjdk-17-jre unzip wget
+
+# Elasticsearch kernel requirements
+sysctl -w vm.max_map_count=524288
+sysctl -w fs.file-max=131072
+echo "vm.max_map_count=524288" >> /etc/sysctl.conf
+echo "fs.file-max=131072"      >> /etc/sysctl.conf
+
+# Dedicated system user
+useradd -r -m -s /bin/false sonarqube || true
+
+# Download and install
+SONAR_ZIP="sonarqube-$${SONARQUBE_VERSION}.zip"
+wget -q "https://binaries.sonarsource.com/Distribution/sonarqube/$${SONAR_ZIP}" -O /tmp/$${SONAR_ZIP}
+unzip -q /tmp/$${SONAR_ZIP} -d /opt
+mv /opt/sonarqube-$${SONARQUBE_VERSION} $${SONAR_HOME}
+chown -R sonarqube:sonarqube $${SONAR_HOME}
+
+# Systemd unit
+cat > /etc/systemd/system/sonarqube.service <<'UNIT'
+[Unit]
+Description=SonarQube
+After=network.target
+
+[Service]
+Type=forking
+User=sonarqube
+ExecStart=/opt/sonarqube/bin/linux-x86-64/sonar.sh start
+ExecStop=/opt/sonarqube/bin/linux-x86-64/sonar.sh stop
+Restart=on-failure
+LimitNOFILE=131072
+LimitNPROC=8192
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable sonarqube
+systemctl start sonarqube
+
+PUBLIC_IP="$(curl -sf http://169.254.169.254/latest/meta-data/public-ipv4 || echo unknown)"
+echo "SonarQube started. Access at http://$${PUBLIC_IP}:9000"
+echo "Default credentials: admin / admin — change on first login."

@@ -124,3 +124,27 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "enable_sonarqube" {
+  description = "Deploy a dedicated SonarQube EC2 instance for source code scanning."
+  type        = bool
+  default     = false
+}
+
+variable "sonarqube_instance_type" {
+  description = "EC2 instance type for the SonarQube server. Minimum t3.medium recommended."
+  type        = string
+  default     = "t3.medium"
+}
+
+variable "sonarqube_version" {
+  description = "SonarQube Community Edition version to install."
+  type        = string
+  default     = "10.4.1.88267"
+}
+
+variable "enable_alb" {
+  description = "Enable Application Load Balancer resources."
+  type        = bool
+  default     = false
+}

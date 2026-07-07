@@ -1,0 +1,407 @@
+name: Security Tools Deploy and Scan
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - "terraform/**"
+      - "frontend/**"
+      - "backend/**"
+      - ".github/workflows/security-tools.yml"
+
+  workflow_call:
+    inputs:
+      environment:
+        description: Environment to use
+        required: true
+        type: string
+      action:
+        description: Terraform action
+        required: false
+        type: string
+        default: plan
+      image_tag:
+        description: Docker image tag for Trivy scan builds
+        required: false
+        type: string
+        default: latest
+      scan_frontend:
+        description: Scan frontend image with Trivy
+        required: false
+        type: boolean
+        default: true
+      scan_backend:
+        description: Scan backend image with Trivy
+        required: false
+        type: boolean
+        default: true
+      deploy_security_tools:
+        description: Plan/apply security integration infrastructure
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      DB_PASSWORD:
+        required: true
+      SONAR_TOKEN:
+        required: true
+      SONAR_HOST_URL:
+        required: true
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment
+        required: true
+        type: choice
+        options:
+          - dev
+          - uat
+          - prod
+        default: dev
+      action:
+        description: Terraform action
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+        default: plan
+      image_tag:
+        description: Docker image tag for Trivy scan builds
+        required: false
+        type: string
+        default: latest
+      scan_frontend:
+        description: Scan frontend image with Trivy
+        required: false
+        type: boolean
+        default: true
+      scan_backend:
+        description: Scan backend image with Trivy
+        required: false
+        type: boolean
+        default: true
+      deploy_security_tools:
+        description: Plan/apply security integration infrastructure
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+  BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION || '1.9.0' }}
+
+jobs:
+  resolve:
+    name: Resolve Security Inputs
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.resolve.outputs.environment }}
+      action: ${{ steps.resolve.outputs.action }}
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
+      scan_frontend: ${{ steps.resolve.outputs.scan_frontend }}
+      scan_backend: ${{ steps.resolve.outputs.scan_backend }}
+      deploy_security_tools: ${{ steps.resolve.outputs.deploy_security_tools }}
+      tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
+      state_key: ${{ steps.resolve.outputs.state_key }}
+      aws_account_id: ${{ steps.resolve.outputs.aws_account_id }}
+
+    steps:
+      - name: Resolve inputs
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RESOLVED_AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID}"
+          if [[ -z "${RESOLVED_AWS_ACCOUNT_ID}" ]]; then
+            RESOLVED_AWS_ACCOUNT_ID="$(echo "${BOOTSTRAP_ROLE_ARN}" | awk -F: '{print $5}')"
+          fi
+
+          REQUIRED_VARS=("AWS_REGION" "PROJECT_NAME" "BOOTSTRAP_ROLE_ARN" "TF_STATE_BUCKET" "RESOLVED_AWS_ACCOUNT_ID")
+          for VAR_NAME in "${REQUIRED_VARS[@]}"; do
+            if [[ -z "${!VAR_NAME}" ]]; then
+              echo "Missing required value: ${VAR_NAME}"
+              exit 1
+            fi
+          done
+
+          if [[ -z "${{ secrets.DB_PASSWORD }}" ]]; then
+            echo "Missing required GitHub Actions secret: DB_PASSWORD"
+            exit 1
+          fi
+
+          if [[ -z "${{ secrets.SONAR_TOKEN }}" || -z "${{ secrets.SONAR_HOST_URL }}" ]]; then
+            echo "Missing required SonarQube secrets: SONAR_TOKEN or SONAR_HOST_URL"
+            exit 1
+          fi
+
+          ENVIRONMENT="${{ inputs.environment || github.event.inputs.environment || 'dev' }}"
+          ACTION="${{ inputs.action || github.event.inputs.action || 'plan' }}"
+          IMAGE_TAG="${{ inputs.image_tag || github.event.inputs.image_tag || 'latest' }}"
+          SCAN_FRONTEND="${{ inputs.scan_frontend || github.event.inputs.scan_frontend || true }}"
+          SCAN_BACKEND="${{ inputs.scan_backend || github.event.inputs.scan_backend || true }}"
+          DEPLOY_SECURITY_TOOLS="${{ inputs.deploy_security_tools || github.event.inputs.deploy_security_tools || true }}"
+
+          case "${ENVIRONMENT}" in
+            dev|uat|prod) ;;
+            *)
+              echo "Invalid environment: ${ENVIRONMENT}"
+              exit 1
+              ;;
+          esac
+
+          case "${ACTION}" in
+            plan|apply) ;;
+            *)
+              echo "Invalid action: ${ACTION}"
+              exit 1
+              ;;
+          esac
+
+          TFVARS_FILE="environments/${ENVIRONMENT}.tfvars"
+          STATE_KEY="${PROJECT_NAME}/${ENVIRONMENT}/terraform.tfstate"
+
+          echo "environment=${ENVIRONMENT}" >> "$GITHUB_OUTPUT"
+          echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "scan_frontend=${SCAN_FRONTEND}" >> "$GITHUB_OUTPUT"
+          echo "scan_backend=${SCAN_BACKEND}" >> "$GITHUB_OUTPUT"
+          echo "deploy_security_tools=${DEPLOY_SECURITY_TOOLS}" >> "$GITHUB_OUTPUT"
+          echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
+          echo "state_key=${STATE_KEY}" >> "$GITHUB_OUTPUT"
+          echo "aws_account_id=${RESOLVED_AWS_ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
+
+  scan-terraform:
+    name: Checkov Terraform Scan
+    runs-on: ubuntu-latest
+    needs:
+      - resolve
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Scan Terraform with Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform
+          framework: terraform
+          soft_fail: false
+          output_format: cli
+
+  scan-source:
+    name: SonarQube Source Scan
+    runs-on: ubuntu-latest
+    needs:
+      - resolve
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+  build-images:
+    name: Build Images for Trivy
+    runs-on: ubuntu-latest
+    needs:
+      - resolve
+    if: needs.resolve.outputs.scan_frontend == 'true' || needs.resolve.outputs.scan_backend == 'true'
+    env:
+      ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+      IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
+      RESOLVED_AWS_ACCOUNT_ID: ${{ needs.resolve.outputs.aws_account_id }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build frontend image
+        if: needs.resolve.outputs.scan_frontend == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          FRONTEND_IMAGE="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend:${IMAGE_TAG}"
+          docker build -t "${FRONTEND_IMAGE}" frontend
+          docker save "${FRONTEND_IMAGE}" -o frontend-image.tar
+
+      - name: Build backend image
+        if: needs.resolve.outputs.scan_backend == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BACKEND_IMAGE="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}/${ENVIRONMENT}/todo-backend:${IMAGE_TAG}"
+          docker build -t "${BACKEND_IMAGE}" backend
+          docker save "${BACKEND_IMAGE}" -o backend-image.tar
+
+      - name: Upload Docker images
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-tools-images-${{ needs.resolve.outputs.image_tag }}
+          path: |
+            frontend-image.tar
+            backend-image.tar
+          if-no-files-found: error
+
+  scan-images:
+    name: Trivy Image Scan
+    runs-on: ubuntu-latest
+    needs:
+      - resolve
+      - build-images
+    if: needs.resolve.outputs.scan_frontend == 'true' || needs.resolve.outputs.scan_backend == 'true'
+    steps:
+      - name: Download Docker images
+        uses: actions/download-artifact@v4
+        with:
+          name: security-tools-images-${{ needs.resolve.outputs.image_tag }}
+          path: .
+
+      - name: Scan frontend image with Trivy
+        if: needs.resolve.outputs.scan_frontend == 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          input: frontend-image.tar
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Scan backend image with Trivy
+        if: needs.resolve.outputs.scan_backend == 'true'
+        uses: aquasecurity/trivy-action@master
+        with:
+          input: backend-image.tar
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+  plan-security-tools:
+    name: Terraform Plan Security Tools
+    runs-on: ubuntu-latest
+    needs:
+      - resolve
+      - scan-terraform
+      - scan-source
+      - scan-images
+    if: always() && needs.resolve.outputs.deploy_security_tools == 'true' && needs.scan-terraform.result == 'success' && needs.scan-source.result == 'success' && (needs.scan-images.result == 'success' || needs.scan-images.result == 'skipped')
+    env:
+      ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+      TFVARS_FILE: ${{ needs.resolve.outputs.tfvars_file }}
+      STATE_KEY: ${{ needs.resolve.outputs.state_key }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSecurityToolsPlan
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init and validate
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+          terraform validate
+
+      - name: Terraform plan security integration module
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform plan \
+            -var-file="${TFVARS_FILE}" \
+            -var="aws_region=${AWS_REGION}" \
+            -var="project_name=${PROJECT_NAME}" \
+            -var="db_password=${DB_PASSWORD}" \
+            -var="enable_sonarqube=true" \
+            -target=module.security_integration \
+            -out=security-tools-tfplan
+
+      - name: Upload security tools Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-tools-plan-${{ needs.resolve.outputs.environment }}
+          path: terraform/security-tools-tfplan
+          if-no-files-found: error
+
+  apply-security-tools:
+    name: Terraform Apply Security Tools
+    runs-on: ubuntu-latest
+    needs:
+      - resolve
+      - plan-security-tools
+    if: needs.resolve.outputs.action == 'apply' && needs.resolve.outputs.deploy_security_tools == 'true'
+    environment: ${{ needs.resolve.outputs.environment == 'prod' && 'prod' || '' }}
+    env:
+      STATE_KEY: ${{ needs.resolve.outputs.state_key }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSecurityToolsApply
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Download security tools Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: security-tools-plan-${{ needs.resolve.outputs.environment }}
+          path: terraform
+
+      - name: Terraform apply
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform apply -auto-approve security-tools-tfplan

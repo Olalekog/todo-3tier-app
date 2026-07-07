@@ -98,7 +98,7 @@ repo-root/
 │   │   └── prod.tfvars
 │   ├── modules/
 │   │   ├── network/
-│   │   ├── security-groups/
+│   │   ├── security-tools/
 │   │   ├── ecr/
 │   │   ├── database/
 │   │   └── compute/
@@ -354,7 +354,7 @@ flowchart TB
     Root[terraform/main.tf]
 
     Root --> Network[modules/network]
-    Root --> SG[modules/security-groups]
+    Root --> SG[modules/security-tools]
     Root --> ECR[modules/ecr]
     Root --> DB[modules/database]
     Root --> BackendCompute[module backend_compute<br/>source: modules/compute]
@@ -1241,7 +1241,7 @@ terraform/
 ├── versions.tf
 ├── modules/
 │   ├── network/
-│   ├── security-groups/
+│   ├── security-tools/
 │   ├── ecr/
 │   ├── compute/
 │   └── database/
@@ -1381,7 +1381,7 @@ repo-root/
     │   │   └── prod.tfvars
     │   ├── modules/
     │   │   ├── network/
-    │   │   ├── security-groups/
+    │   │   ├── security-tools/
     │   │   ├── ecr/
     │   │   ├── compute/
     │   │   └── database/

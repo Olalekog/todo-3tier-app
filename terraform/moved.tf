@@ -29,3 +29,43 @@ moved {
   from = module.compute.aws_iam_role_policy_attachment.ec2_ecr_read_only
   to   = module.backend_compute.aws_iam_role_policy_attachment.ecr_read_only
 }
+
+moved {
+  from = aws_security_group.sonarqube
+  to   = module.security_integration.aws_security_group.sonarqube
+}
+
+moved {
+  from = aws_iam_role.sonarqube
+  to   = module.security_integration.aws_iam_role.sonarqube
+}
+
+moved {
+  from = aws_iam_role_policy_attachment.sonarqube_ssm
+  to   = module.security_integration.aws_iam_role_policy_attachment.sonarqube_ssm
+}
+
+moved {
+  from = aws_iam_instance_profile.sonarqube
+  to   = module.security_integration.aws_iam_instance_profile.sonarqube
+}
+
+moved {
+  from = aws_instance.sonarqube
+  to   = module.security_integration.aws_instance.sonarqube
+}
+
+moved {
+  from = module.security_groups.module.deploy.aws_security_group.frontend
+  to   = module.security_groups.aws_security_group.frontend
+}
+
+moved {
+  from = module.security_groups.module.deploy.aws_security_group.backend
+  to   = module.security_groups.aws_security_group.backend
+}
+
+moved {
+  from = module.security_groups.module.deploy.aws_security_group.database
+  to   = module.security_groups.aws_security_group.database
+}

@@ -1,30 +1,3 @@
-resource "aws_security_group" "alb" {
-  name        = "${var.project_name}-${var.environment}-alb-sg"
-  description = "ALB security group"
-  vpc_id      = var.vpc_id
-
-  ingress {
-    description = "Allow HTTP to ALB"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = [var.allowed_http_cidr]
-  }
-
-  egress {
-    description = "Allow all outbound traffic"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(var.tags, {
-    Name = "${var.project_name}-${var.environment}-alb-sg"
-    Tier = "alb"
-  })
-}
-
 resource "aws_security_group" "frontend" {
   name        = "${var.project_name}-${var.environment}-frontend-sg"
   description = "Frontend security group"

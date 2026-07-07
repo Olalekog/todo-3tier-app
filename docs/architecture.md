@@ -48,7 +48,7 @@ terraform/
 ├── backend-values.example.txt
 ├── modules/
 │   ├── network/
-│   ├── security-groups/
+│   ├── security-tools/
 │   ├── ecr/
 │   ├── compute/
 │   └── database/

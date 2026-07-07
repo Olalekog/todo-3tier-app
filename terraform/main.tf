@@ -68,6 +68,23 @@ module "security_groups" {
   tags                        = local.common_tags
 }
 
+module "security_integration" {
+  source = "./modules/security-tools/integration"
+
+  project_name            = var.project_name
+  environment             = var.environment
+  vpc_id                  = module.network.vpc_id
+  public_subnet_id        = module.network.public_subnet_ids[0]
+  ami_id                  = data.aws_ami.ubuntu.id
+  allowed_ssh_cidr        = var.allowed_ssh_cidr
+  key_name                = var.key_name
+  enable_sonarqube        = var.enable_sonarqube
+  sonarqube_instance_type = var.sonarqube_instance_type
+  sonarqube_version       = var.sonarqube_version
+  user_data_template_path = "${path.module}/templates/user_data_sonarqube.sh.tftpl"
+  tags                    = local.common_tags
+}
+
 module "database" {
   source = "./modules/database"
 
@@ -134,3 +151,17 @@ module "frontend_compute" {
 
   tags = local.common_tags
 }
+
+module "alb" {
+  source = "./modules/alb"
+
+  project_name          = var.project_name
+  environment           = var.environment
+  vpc_id                = module.network.vpc_id
+  public_subnet_ids     = module.network.public_subnet_ids
+  alb_security_group_id = module.security_groups.alb_security_group_id
+  frontend_instance_id  = module.frontend_compute.instance_id
+  enable_alb            = var.enable_alb
+  tags                  = local.common_tags
+}
+
