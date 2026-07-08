@@ -239,15 +239,30 @@ jobs:
         run: |
           set -euo pipefail
 
-          terraform plan \
-            -var-file="${TFVARS_FILE}" \
-            -var="aws_region=${AWS_REGION}" \
-            -var="project_name=${PROJECT_NAME}" \
-            -var="db_password=${DB_PASSWORD}" \
-            -var="frontend_image_tag=${FRONTEND_IMAGE_TAG}" \
-            -var="backend_image_tag=${BACKEND_IMAGE_TAG}" \
-            ${TARGET_ARGS} \
+          PLAN_ARGS=(
+            -var-file="${TFVARS_FILE}"
+            -var="aws_region=${AWS_REGION}"
+            -var="project_name=${PROJECT_NAME}"
+            -var="db_password=${DB_PASSWORD}"
+            -var="frontend_image_tag=${FRONTEND_IMAGE_TAG}"
+            -var="backend_image_tag=${BACKEND_IMAGE_TAG}"
             -out=tfplan
+          )
+
+          set +e
+          terraform plan ${TARGET_ARGS} "${PLAN_ARGS[@]}" 2>plan.err
+          PLAN_EXIT=$?
+          set -e
+
+          if [[ ${PLAN_EXIT} -ne 0 ]]; then
+            if grep -q "Moved resource instances excluded by targeting" plan.err; then
+              echo "Targeted plan failed because resources moved. Retrying full plan without -target."
+              terraform plan "${PLAN_ARGS[@]}"
+            else
+              cat plan.err
+              exit ${PLAN_EXIT}
+            fi
+          fi
 
       - name: Show DB plan changes
         working-directory: terraform
