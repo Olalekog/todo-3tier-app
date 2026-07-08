@@ -6,7 +6,7 @@ on:
       - dev
     paths:
       - "terraform/**"
-      - "!terraform/security-tools/deploy/**"
+      - "!terraform/security-tools/**"
       - "!terraform/templates/user_data_sonarqube.sh.tftpl"
 
   workflow_dispatch:
