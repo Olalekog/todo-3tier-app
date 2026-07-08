@@ -25,8 +25,6 @@ function getApiBaseCandidates() {
   if (host === 'localhost' || host === '127.0.0.1') {
     candidates.push('http://localhost:8000');
     candidates.push('http://127.0.0.1:8000');
-  } else {
-    candidates.push(`${protocol}//${host}:8000`);
   }
 
   return [...new Set(candidates.map((base) => base.replace(/\/$/, '')))].filter(Boolean);

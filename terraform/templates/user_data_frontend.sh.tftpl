@@ -13,8 +13,13 @@ echo "Starting frontend user data..."
 echo "IMAGE_URI=$${IMAGE_URI}"
 echo "BACKEND_HOST=$${BACKEND_HOST}"
 
+if [[ -z "$${BACKEND_HOST}" ]]; then
+  echo "ERROR: BACKEND_HOST is empty. Root module must pass backend_private_ip = module.backend_compute.private_ip"
+  exit 1
+fi
+
 apt-get update -y
-apt-get install -y ca-certificates curl unzip jq docker.io
+apt-get install -y ca-certificates curl unzip jq netcat-openbsd docker.io
 
 systemctl enable docker
 systemctl start docker
@@ -57,6 +62,21 @@ fi
 docker rm -f "$${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
 if [[ "$${IMAGE_READY}" == "true" ]]; then
+  echo "Checking backend TCP connectivity from frontend host..."
+  for i in $(seq 1 30); do
+    if nc -vz "$${BACKEND_HOST}" 8000; then
+      break
+    fi
+
+    if [[ "$${i}" == "30" ]]; then
+      echo "ERROR: Backend is not reachable at $${BACKEND_HOST}:8000 from frontend host."
+      exit 1
+    fi
+
+    echo "Backend not reachable yet. Attempt $${i}/30"
+    sleep 10
+  done
+
   docker run -d   --name "$${CONTAINER_NAME}"   --restart unless-stopped   -p 80:80   -e BACKEND_HOST="$${BACKEND_HOST}"   "$${IMAGE_URI}"
 else
   FALLBACK_DIR="/opt/frontend-fallback"
@@ -84,7 +104,7 @@ EOF
 fi
 
 for i in $(seq 1 30); do
-  if curl -fsS http://localhost >/dev/null 2>&1; then
+  if curl -fsS http://localhost >/dev/null 2>&1 && { [[ "$${IMAGE_READY}" != "true" ]] || curl -fsS http://localhost/api/health >/dev/null 2>&1; }; then
     echo "Frontend is healthy."
     docker ps
     exit 0
@@ -93,6 +113,9 @@ for i in $(seq 1 30); do
   echo "Frontend not ready yet. Attempt $${i}/30"
   docker ps --filter "name=$${CONTAINER_NAME}" || true
   docker logs "$${CONTAINER_NAME}" --tail 100 || true
+  if [[ "$${IMAGE_READY}" == "true" ]]; then
+    curl -v http://localhost/api/health || true
+  fi
   sleep 5
 done
 
