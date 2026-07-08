@@ -164,7 +164,9 @@ jobs:
           STATE_KEY="${PROJECT_NAME}/${ENVIRONMENT}/terraform.tfstate"
 
           TARGET_ARGS=""
-          if [[ "${WORKLOAD}" == "frontend" ]]; then
+          if [[ "${WORKLOAD}" == "infra" ]]; then
+            TARGET_ARGS="-target=module.network -target=module.ecr -target=module.security_groups -target=module.database -target=module.backend_compute -target=module.frontend_compute"
+          elif [[ "${WORKLOAD}" == "frontend" ]]; then
             TARGET_ARGS="-target=module.frontend_compute"
           elif [[ "${WORKLOAD}" == "backend" ]]; then
             TARGET_ARGS="-target=module.backend_compute -target=module.frontend_compute"

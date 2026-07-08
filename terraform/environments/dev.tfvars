@@ -25,7 +25,10 @@ db_username          = "todo_admin"
 db_instance_class    = "db.t3.micro"
 db_allocated_storage = 20
 
-enable_sonarqube = false
+# Keep SonarQube enabled in dev so a full root Terraform apply does not
+# destroy the shared security-tools instance. CI app deploys target app
+# modules only; SonarQube changes still flow through the dedicated workflow.
+enable_sonarqube = true
 
 tags = {
   Owner       = "Olalekan"
