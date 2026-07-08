@@ -243,7 +243,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: SonarQube scan
+      - name: Resolve Sonar new-code baseline
+        id: sonar_baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ENVIRONMENT="${{ needs.resolve.outputs.environment }}"
+          BASELINE_BRANCH="dev"
+
+          if [[ "${ENVIRONMENT}" == "prod" ]]; then
+            BASELINE_BRANCH="uat"
+          fi
+
+          echo "reference_branch=${BASELINE_BRANCH}" >> "$GITHUB_OUTPUT"
+
+      - name: SonarQube scan (non-blocking quality gate for dev)
+        if: needs.resolve.outputs.environment == 'dev'
         uses: sonarsource/sonarqube-scan-action@v6
         with:
           projectBaseDir: .
@@ -251,6 +267,21 @@ jobs:
             -Dsonar.projectKey=${{ vars.PROJECT_NAME }}-${{ needs.resolve.outputs.environment }}
             -Dsonar.projectName=${{ vars.PROJECT_NAME }}
             -Dsonar.sources=frontend/src,backend
+            -Dsonar.qualitygate.wait=false
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+
+      - name: SonarQube scan (enforce quality gate)
+        if: needs.resolve.outputs.environment != 'dev'
+        uses: sonarsource/sonarqube-scan-action@v6
+        with:
+          projectBaseDir: .
+          args: >
+            -Dsonar.projectKey=${{ vars.PROJECT_NAME }}-${{ needs.resolve.outputs.environment }}
+            -Dsonar.projectName=${{ vars.PROJECT_NAME }}
+            -Dsonar.sources=frontend/src,backend
+            -Dsonar.newCode.referenceBranch=${{ steps.sonar_baseline.outputs.reference_branch }}
             -Dsonar.qualitygate.wait=true
             -Dsonar.qualitygate.timeout=300
         env:
@@ -318,7 +349,7 @@ jobs:
         id: trivy_frontend_gate
         continue-on-error: true
         if: needs.resolve.outputs.scan_frontend == 'true'
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           input: frontend-image.tar
           format: table
@@ -330,7 +361,7 @@ jobs:
         id: trivy_backend_gate
         continue-on-error: true
         if: needs.resolve.outputs.scan_backend == 'true'
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           input: backend-image.tar
           format: table
@@ -340,7 +371,7 @@ jobs:
 
       - name: Generate frontend Trivy SARIF
         if: always() && needs.resolve.outputs.scan_frontend == 'true'
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           input: frontend-image.tar
           format: sarif
@@ -351,7 +382,7 @@ jobs:
 
       - name: Generate backend Trivy SARIF
         if: always() && needs.resolve.outputs.scan_backend == 'true'
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           input: backend-image.tar
           format: sarif
