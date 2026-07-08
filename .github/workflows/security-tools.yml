@@ -236,7 +236,13 @@ jobs:
           fetch-depth: 0
 
       - name: SonarQube scan
-        uses: SonarSource/sonarqube-scan-action@v4
+        uses: sonarsource/sonarqube-scan-action@v6
+        with:
+          projectBaseDir: .
+          args: >
+            -Dsonar.projectKey=${{ vars.PROJECT_NAME }}-${{ needs.resolve.outputs.environment }}
+            -Dsonar.projectName=${{ vars.PROJECT_NAME }}
+            -Dsonar.sources=frontend/src,backend
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
