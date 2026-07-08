@@ -12,6 +12,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  actions: write
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
@@ -226,6 +227,16 @@ jobs:
           SONARQUBE_URL="$(terraform output -raw sonarqube_url || true)"
           echo "sonarqube_url=${SONARQUBE_URL}" >> "$GITHUB_OUTPUT"
           echo "${SONARQUBE_URL}"
+
+      - name: Update SonarQube host variable
+        if: steps.sonarqube_url.outputs.sonarqube_url != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SONARQUBE_URL: ${{ steps.sonarqube_url.outputs.sonarqube_url }}
+        run: |
+          set -euo pipefail
+          gh variable set SONAR_HOST_URL --body "${SONARQUBE_URL}" --repo "${GITHUB_REPOSITORY}"
 
       - name: Wait for SonarQube to become reachable
         if: steps.sonarqube_url.outputs.sonarqube_url != ''

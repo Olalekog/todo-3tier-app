@@ -259,6 +259,74 @@ jobs:
 
           echo "reference_branch=${BASELINE_BRANCH}" >> "$GITHUB_OUTPUT"
 
+      - name: Configure AWS credentials for SonarQube access
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSonarQubeScan
+
+      - name: Allow this runner to reach SonarQube
+        id: sonar_access
+        shell: bash
+        env:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        run: |
+          set -euo pipefail
+
+          RUNNER_IP="$(curl -fsS --connect-timeout 10 https://api.ipify.org)"
+          RUNNER_CIDR="${RUNNER_IP}/32"
+          SONAR_HOST="$(python3 -c 'import os, urllib.parse; print(urllib.parse.urlparse(os.environ["SONAR_HOST_URL"]).hostname or "")')"
+
+          if [[ -z "${RUNNER_IP}" || -z "${SONAR_HOST}" ]]; then
+            echo "Unable to resolve runner IP or SonarQube host."
+            exit 1
+          fi
+
+          SONAR_IP="${SONAR_HOST}"
+          if ! [[ "${SONAR_IP}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            SONAR_IP="$(getent ahostsv4 "${SONAR_HOST}" | awk '{print $1; exit}')"
+          fi
+
+          if [[ -z "${SONAR_IP}" ]]; then
+            echo "Unable to resolve SonarQube host ${SONAR_HOST} to an IPv4 address."
+            exit 1
+          fi
+
+          SG_IDS="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --filters "Name=ip-address,Values=${SONAR_IP}" "Name=instance-state-name,Values=pending,running" \
+            --query 'Reservations[].Instances[].SecurityGroups[].GroupId' \
+            --output text)"
+
+          if [[ -z "${SG_IDS}" || "${SG_IDS}" == "None" ]]; then
+            echo "No running SonarQube EC2 instance found with public IP ${SONAR_IP}."
+            exit 1
+          fi
+
+          for SG_ID in ${SG_IDS}; do
+            echo "Authorizing ${RUNNER_CIDR} for ${SG_ID}:9000"
+            aws ec2 authorize-security-group-ingress \
+              --region "${AWS_REGION}" \
+              --group-id "${SG_ID}" \
+              --ip-permissions "IpProtocol=tcp,FromPort=9000,ToPort=9000,IpRanges=[{CidrIp=${RUNNER_CIDR},Description=github-actions-sonarqube-scan}]" \
+              >/dev/null 2>&1 || true
+          done
+
+          echo "runner_cidr=${RUNNER_CIDR}" >> "$GITHUB_OUTPUT"
+          echo "security_group_ids=${SG_IDS}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify SonarQube scanner endpoint
+        shell: bash
+        env:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        run: |
+          set -euo pipefail
+
+          VERSION_URL="${SONAR_HOST_URL%/}/api/v2/analysis/version"
+          echo "Checking ${VERSION_URL}"
+          curl -fsS --connect-timeout 10 --max-time 20 "${VERSION_URL}" >/dev/null
+
       - name: SonarQube scan (non-blocking quality gate for dev)
         if: needs.resolve.outputs.environment == 'dev'
         uses: sonarsource/sonarqube-scan-action@v6
@@ -288,6 +356,24 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+
+      - name: Revoke runner SonarQube access
+        if: always() && steps.sonar_access.outputs.security_group_ids != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RUNNER_CIDR="${{ steps.sonar_access.outputs.runner_cidr }}"
+          SG_IDS="${{ steps.sonar_access.outputs.security_group_ids }}"
+
+          for SG_ID in ${SG_IDS}; do
+            echo "Revoking ${RUNNER_CIDR} from ${SG_ID}:9000"
+            aws ec2 revoke-security-group-ingress \
+              --region "${AWS_REGION}" \
+              --group-id "${SG_ID}" \
+              --ip-permissions "IpProtocol=tcp,FromPort=9000,ToPort=9000,IpRanges=[{CidrIp=${RUNNER_CIDR}}]" \
+              >/dev/null 2>&1 || true
+          done
 
   build-images:
     name: Build Images for Trivy
