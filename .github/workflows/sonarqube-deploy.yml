@@ -39,7 +39,7 @@ jobs:
           ACTION="apply"
 
           TFVARS_FILE="environments/dev.tfvars"
-          STATE_KEY="${PROJECT_NAME}/sonarqube/terraform.tfstate"
+          STATE_KEY="${PROJECT_NAME}/dev/terraform.tfstate"
 
           echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
           echo "state_key=${STATE_KEY}" >> "$GITHUB_OUTPUT"
@@ -154,8 +154,61 @@ jobs:
           terraform apply -auto-approve sonarqube-tfplan
 
       - name: Show SonarQube URL
+        id: sonarqube_url
         working-directory: terraform
         shell: bash
         run: |
           set -euo pipefail
-          terraform output sonarqube_url || true
+          SONARQUBE_URL="$(terraform output -raw sonarqube_url || true)"
+          echo "sonarqube_url=${SONARQUBE_URL}" >> "$GITHUB_OUTPUT"
+          echo "${SONARQUBE_URL}"
+
+      - name: Wait for SonarQube to become reachable
+        if: steps.sonarqube_url.outputs.sonarqube_url != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="${{ steps.sonarqube_url.outputs.sonarqube_url }}"
+
+          echo "Checking SonarQube endpoint: ${URL}"
+          for i in {1..40}; do
+            if curl -fsS --max-time 8 "${URL}" >/dev/null; then
+              echo "SonarQube is reachable."
+              exit 0
+            fi
+            echo "Attempt ${i}/40: SonarQube not ready yet; waiting 15s..."
+            sleep 15
+          done
+
+          echo "SonarQube did not become reachable in time."
+          exit 1
+
+      - name: SonarQube diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INSTANCE_NAME="${PROJECT_NAME}-dev-sonarqube"
+          INSTANCE_ID="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --filters "Name=tag:Name,Values=${INSTANCE_NAME}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query 'Reservations[].Instances[].InstanceId' \
+            --output text | awk '{print $1}')"
+
+          if [[ -n "${INSTANCE_ID}" && "${INSTANCE_ID}" != "None" ]]; then
+            echo "Instance: ${INSTANCE_ID}"
+            aws ec2 describe-instances \
+              --region "${AWS_REGION}" \
+              --instance-ids "${INSTANCE_ID}" \
+              --query 'Reservations[].Instances[].{State:State.Name,PublicIp:PublicIpAddress,PrivateIp:PrivateIpAddress,Subnet:SubnetId,SGs:SecurityGroups[].GroupId,LaunchTime:LaunchTime}'
+
+            echo "Recent console output:"
+            aws ec2 get-console-output \
+              --region "${AWS_REGION}" \
+              --instance-id "${INSTANCE_ID}" \
+              --latest \
+              --output text || true
+          else
+            echo "No SonarQube instance found for tag Name=${INSTANCE_NAME}"
+          fi
