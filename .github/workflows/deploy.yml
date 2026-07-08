@@ -287,13 +287,32 @@ jobs:
           FLOW_LOGS_ALIAS="alias/${PROJECT_ENV_PREFIX}-vpc-flow-logs"
           FLOW_LOGS_GROUP="/aws/vpc/${PROJECT_ENV_PREFIX}-flow-logs"
 
+          FLOW_LOGS_KEY_ID=""
+          if aws kms describe-key --key-id "${FLOW_LOGS_ALIAS}" --query 'KeyMetadata.KeyId' --output text >/tmp/flow_logs_key_id.txt 2>/dev/null; then
+            FLOW_LOGS_KEY_ID="$(cat /tmp/flow_logs_key_id.txt)"
+          fi
+
+          # If an existing key was previously scheduled for deletion or disabled,
+          # recover it so CloudWatch Logs can use it during apply.
+          if [[ -n "${FLOW_LOGS_KEY_ID}" && "${FLOW_LOGS_KEY_ID}" != "None" ]]; then
+            FLOW_LOGS_KEY_STATE="$(aws kms describe-key --key-id "${FLOW_LOGS_KEY_ID}" --query 'KeyMetadata.KeyState' --output text 2>/dev/null || true)"
+
+            if [[ "${FLOW_LOGS_KEY_STATE}" == "PendingDeletion" || "${FLOW_LOGS_KEY_STATE}" == "PendingReplicaDeletion" ]]; then
+              echo "KMS key ${FLOW_LOGS_KEY_ID} is ${FLOW_LOGS_KEY_STATE}; cancelling deletion."
+              aws kms cancel-key-deletion --key-id "${FLOW_LOGS_KEY_ID}" >/dev/null
+            fi
+
+            FLOW_LOGS_KEY_STATE="$(aws kms describe-key --key-id "${FLOW_LOGS_KEY_ID}" --query 'KeyMetadata.KeyState' --output text 2>/dev/null || true)"
+            if [[ "${FLOW_LOGS_KEY_STATE}" == "Disabled" ]]; then
+              echo "KMS key ${FLOW_LOGS_KEY_ID} is disabled; enabling key."
+              aws kms enable-key --key-id "${FLOW_LOGS_KEY_ID}" >/dev/null
+            fi
+          fi
+
           if ! terraform state show "module.kms_vpc_flow_logs.aws_kms_key.this" >/dev/null 2>&1; then
-            if aws kms describe-key --key-id "${FLOW_LOGS_ALIAS}" --query 'KeyMetadata.KeyId' --output text >/tmp/flow_logs_key_id.txt 2>/dev/null; then
-              FLOW_LOGS_KEY_ID="$(cat /tmp/flow_logs_key_id.txt)"
-              if [[ -n "${FLOW_LOGS_KEY_ID}" && "${FLOW_LOGS_KEY_ID}" != "None" ]]; then
-                echo "Importing module.kms_vpc_flow_logs.aws_kms_key.this from ${FLOW_LOGS_KEY_ID}"
-                terraform import "${TF_IMPORT_ARGS[@]}" "module.kms_vpc_flow_logs.aws_kms_key.this" "${FLOW_LOGS_KEY_ID}"
-              fi
+            if [[ -n "${FLOW_LOGS_KEY_ID}" && "${FLOW_LOGS_KEY_ID}" != "None" ]]; then
+              echo "Importing module.kms_vpc_flow_logs.aws_kms_key.this from ${FLOW_LOGS_KEY_ID}"
+              terraform import "${TF_IMPORT_ARGS[@]}" "module.kms_vpc_flow_logs.aws_kms_key.this" "${FLOW_LOGS_KEY_ID}"
             fi
           fi
 
