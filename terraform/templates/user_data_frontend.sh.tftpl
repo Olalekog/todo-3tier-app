@@ -59,8 +59,9 @@ docker rm -f "$${CONTAINER_NAME}" >/dev/null 2>&1 || true
 if [[ "$${IMAGE_READY}" == "true" ]]; then
   docker run -d   --name "$${CONTAINER_NAME}"   --restart unless-stopped   -p 80:80   -e BACKEND_HOST="$${BACKEND_HOST}"   "$${IMAGE_URI}"
 else
-  mkdir -p /tmp/frontend-fallback
-  cat > /tmp/frontend-fallback/index.html <<'EOF'
+  FALLBACK_DIR="/opt/frontend-fallback"
+  mkdir -p "$${FALLBACK_DIR}"
+  cat > "$${FALLBACK_DIR}/index.html" <<'EOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -79,7 +80,7 @@ else
 </body>
 </html>
 EOF
-  docker run -d --name "$${CONTAINER_NAME}" --restart unless-stopped -p 80:80 -v /tmp/frontend-fallback:/usr/share/nginx/html:ro nginx:alpine
+  docker run -d --name "$${CONTAINER_NAME}" --restart unless-stopped -p 80:80 -v "$${FALLBACK_DIR}:/usr/share/nginx/html:ro" nginx:alpine
 fi
 
 for i in $(seq 1 30); do

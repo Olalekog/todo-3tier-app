@@ -164,7 +164,7 @@ jobs:
           SCAN_BACKEND="${SCAN_BACKEND:-true}"
           SCAN_SOURCE="${SCAN_SOURCE:-true}"
 
-          if [[ "${SCAN_SOURCE}" == "true" && ( -z "${{ secrets.SONAR_TOKEN }}" || -z "${{ secrets.SONAR_HOST_URL }}" ) ]]; then
+          if [[ "${SCAN_SOURCE}" == "true" && ( -z "${{ secrets.SONAR_TOKEN }}" || -z "${{ vars.SONAR_HOST_URL }}" ) ]]; then
             echo "SonarQube secrets missing; source scan will be skipped."
             SCAN_SOURCE="false"
           fi
@@ -239,7 +239,7 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@v4
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
 
   build-images:
     name: Build Images for Trivy
