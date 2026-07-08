@@ -8,6 +8,7 @@ on:
       - "terraform/security-tools/deploy/**"
       - "terraform/templates/user_data_sonarqube.sh.tftpl"
       - ".github/workflows/sonarqube-deploy.yml"
+  workflow_dispatch:
 
 permissions:
   id-token: write
@@ -83,6 +84,33 @@ jobs:
             -backend-config="region=${AWS_REGION}" \
             -backend-config="encrypt=true"
           terraform validate
+
+      - name: Remove terminated SonarQube instance from state
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INSTANCE_ADDRESS="module.security_integration.module.sonarqube_compute[0].aws_instance.this"
+          INSTANCE_ID="$(terraform state show "${INSTANCE_ADDRESS}" 2>/dev/null | awk -F ' = ' '/^[[:space:]]*id[[:space:]]*=/{print $2; exit}' || true)"
+
+          if [[ -z "${INSTANCE_ID}" ]]; then
+            echo "No SonarQube EC2 instance currently tracked in Terraform state."
+            exit 0
+          fi
+
+          INSTANCE_STATE="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text 2>/dev/null || true)"
+
+          echo "Tracked SonarQube instance ${INSTANCE_ID} state: ${INSTANCE_STATE:-not-found}"
+
+          if [[ -z "${INSTANCE_STATE}" || "${INSTANCE_STATE}" == "None" || "${INSTANCE_STATE}" == "terminated" || "${INSTANCE_STATE}" == "shutting-down" ]]; then
+            echo "Removing stale SonarQube instance from Terraform state so it can be recreated."
+            terraform state rm "${INSTANCE_ADDRESS}"
+          fi
 
       - name: Reconcile existing SonarQube resources into state
         working-directory: terraform
