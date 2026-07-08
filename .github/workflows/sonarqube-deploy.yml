@@ -264,7 +264,12 @@ jobs:
           SONARQUBE_URL: ${{ steps.sonarqube_url.outputs.sonarqube_url }}
         run: |
           set -euo pipefail
-          gh variable set SONAR_HOST_URL --body "${SONARQUBE_URL}" --repo "${GITHUB_REPOSITORY}"
+          if gh variable set SONAR_HOST_URL --body "${SONARQUBE_URL}" --repo "${GITHUB_REPOSITORY}"; then
+            echo "Updated SONAR_HOST_URL to ${SONARQUBE_URL}"
+          else
+            echo "Warning: could not update SONAR_HOST_URL with the GitHub Actions token."
+            echo "The scan workflow resolves the live SonarQube URL from AWS, so deployment can continue."
+          fi
 
       - name: Wait for SonarQube to become reachable
         if: steps.sonarqube_url.outputs.sonarqube_url != ''
