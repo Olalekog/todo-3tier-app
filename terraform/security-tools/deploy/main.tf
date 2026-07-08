@@ -5,14 +5,14 @@ data "aws_subnet" "sonarqube" {
 
 check "sonarqube_subnet_in_vpc" {
   assert {
-    condition     = !var.enable_sonarqube || data.aws_subnet.sonarqube[0].vpc_id == var.vpc_id
+    condition     = !var.enable_sonarqube || try(data.aws_subnet.sonarqube[0].vpc_id, "") == var.vpc_id
     error_message = "SonarQube subnet must belong to the same VPC as the app infrastructure."
   }
 }
 
 check "sonarqube_subnet_is_public" {
   assert {
-    condition     = !var.enable_sonarqube || data.aws_subnet.sonarqube[0].map_public_ip_on_launch
+    condition     = !var.enable_sonarqube || try(data.aws_subnet.sonarqube[0].map_public_ip_on_launch, false)
     error_message = "SonarQube must be deployed in a public subnet with auto-assign public IP enabled."
   }
 }
