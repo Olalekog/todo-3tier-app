@@ -18,6 +18,17 @@ resource "aws_kms_key" "this" {
         Resource = "*"
       },
       {
+        Sid    = "AllowCloudWatchLogsDescribeKey"
+        Effect = "Allow"
+        Principal = {
+          Service = "logs.${var.aws_region}.amazonaws.com"
+        }
+        Action = [
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+      },
+      {
         Sid    = "AllowCloudWatchLogsUseOfTheKey"
         Effect = "Allow"
         Principal = {
@@ -32,8 +43,7 @@ resource "aws_kms_key" "this" {
           "kms:ReEncryptFrom",
           "kms:ReEncryptTo",
           "kms:GenerateDataKey",
-          "kms:GenerateDataKeyWithoutPlaintext",
-          "kms:DescribeKey"
+          "kms:GenerateDataKeyWithoutPlaintext"
         ]
         Resource = "*"
         Condition = {
