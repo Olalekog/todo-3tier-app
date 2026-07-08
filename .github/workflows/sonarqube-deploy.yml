@@ -83,6 +83,70 @@ jobs:
             -backend-config="encrypt=true"
           terraform validate
 
+      - name: Reconcile existing SonarQube resources into state
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TF_IMPORT_ARGS=(
+            -var-file="${TFVARS_FILE}"
+            -var-file="${SONARQUBE_TFVARS_FILE}"
+            -var="aws_region=${AWS_REGION}"
+            -var="project_name=${PROJECT_NAME}"
+            -var="db_password=${DB_PASSWORD}"
+          )
+
+          tf_import_if_missing() {
+            local address="$1"
+            local import_id="$2"
+            local check_cmd="$3"
+
+            if terraform state show "$address" >/dev/null 2>&1; then
+              return 0
+            fi
+
+            if eval "$check_cmd" >/dev/null 2>&1; then
+              echo "Importing ${address} from ${import_id}"
+              terraform import "${TF_IMPORT_ARGS[@]}" "$address" "$import_id"
+            fi
+          }
+
+          PROJECT_ENV_PREFIX="${PROJECT_NAME}-dev"
+          SONARQUBE_ROLE="${PROJECT_ENV_PREFIX}-sonarqube-ec2-role"
+          SONARQUBE_PROFILE="${PROJECT_ENV_PREFIX}-sonarqube-instance-profile"
+          SONARQUBE_SG_NAME="${PROJECT_ENV_PREFIX}-sonarqube-sg"
+          SONARQUBE_INSTANCE_NAME="${PROJECT_ENV_PREFIX}-sonarqube"
+          VPC_ID="$(terraform state show module.network.aws_vpc.main 2>/dev/null | awk -F ' = ' '/^[[:space:]]*id[[:space:]]*=/{print $2; exit}' || true)"
+
+          if [[ -n "${VPC_ID}" ]]; then
+            SONARQUBE_SG_ID="$(aws ec2 describe-security-groups \
+              --region "${AWS_REGION}" \
+              --filters "Name=group-name,Values=${SONARQUBE_SG_NAME}" "Name=vpc-id,Values=${VPC_ID}" \
+              --query 'SecurityGroups[0].GroupId' \
+              --output text 2>/dev/null || true)"
+          else
+            SONARQUBE_SG_ID=""
+          fi
+
+          SONARQUBE_INSTANCE_ID="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --filters "Name=tag:Name,Values=${SONARQUBE_INSTANCE_NAME}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query 'Reservations[].Instances[].InstanceId' \
+            --output text | awk '{print $1}')"
+
+          tf_import_if_missing "module.security_integration.module.sonarqube_compute[0].aws_iam_role.this" "${SONARQUBE_ROLE}" "aws iam get-role --role-name ${SONARQUBE_ROLE} --output json"
+          tf_import_if_missing "module.security_integration.module.sonarqube_compute[0].aws_iam_instance_profile.this" "${SONARQUBE_PROFILE}" "aws iam get-instance-profile --instance-profile-name ${SONARQUBE_PROFILE} --output json"
+          tf_import_if_missing "module.security_integration.module.sonarqube_compute[0].aws_iam_role_policy_attachment.ssm" "${SONARQUBE_ROLE}/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" "aws iam list-attached-role-policies --role-name ${SONARQUBE_ROLE} --query \"contains(AttachedPolicies[].PolicyArn, 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore')\" --output text | grep -q true"
+
+          if [[ -n "${SONARQUBE_SG_ID}" && "${SONARQUBE_SG_ID}" != "None" ]]; then
+            tf_import_if_missing "module.security_integration.module.security_groups.aws_security_group.sonarqube[0]" "${SONARQUBE_SG_ID}" "aws ec2 describe-security-groups --region ${AWS_REGION} --group-ids ${SONARQUBE_SG_ID} --output json"
+          fi
+
+          if [[ -n "${SONARQUBE_INSTANCE_ID}" && "${SONARQUBE_INSTANCE_ID}" != "None" ]]; then
+            tf_import_if_missing "module.security_integration.module.sonarqube_compute[0].aws_instance.this" "${SONARQUBE_INSTANCE_ID}" "aws ec2 describe-instances --region ${AWS_REGION} --instance-ids ${SONARQUBE_INSTANCE_ID} --output json"
+          fi
+
       - name: Terraform plan SonarQube
         working-directory: terraform
         shell: bash
