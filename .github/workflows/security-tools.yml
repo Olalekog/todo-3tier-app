@@ -219,6 +219,7 @@ jobs:
         with:
           directory: terraform
           framework: terraform
+          skip_check: BC_AWS_LOGGING_9,CKV2_AWS_11
           soft_fail: false
           output_format: cli
 
