@@ -249,17 +249,20 @@ jobs:
             -out=tfplan
           )
 
+          PLAN_LOG="plan.log"
+
           set +e
-          terraform plan ${TARGET_ARGS} "${PLAN_ARGS[@]}" 2>plan.err
+          terraform plan ${TARGET_ARGS} "${PLAN_ARGS[@]}" >"${PLAN_LOG}" 2>&1
           PLAN_EXIT=$?
           set -e
 
+          cat "${PLAN_LOG}"
+
           if [[ ${PLAN_EXIT} -ne 0 ]]; then
-            if grep -q "Moved resource instances excluded by targeting" plan.err; then
+            if grep -q "Moved resource instances excluded by targeting" "${PLAN_LOG}"; then
               echo "Targeted plan failed because resources moved. Retrying full plan without -target."
               terraform plan "${PLAN_ARGS[@]}"
             else
-              cat plan.err
               exit ${PLAN_EXIT}
             fi
           fi
