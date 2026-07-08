@@ -5,5 +5,4 @@ variable "availability_zones" { type = list(string) }
 variable "public_subnet_cidrs" { type = list(string) }
 variable "private_app_subnet_cidrs" { type = list(string) }
 variable "private_db_subnet_cidrs" { type = list(string) }
-variable "vpc_flow_logs_kms_key_arn" { type = string }
 variable "tags" { type = map(string) }

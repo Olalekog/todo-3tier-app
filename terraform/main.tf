@@ -35,15 +35,6 @@ locals {
   })
 }
 
-module "kms_vpc_flow_logs" {
-  source = "./modules/kms"
-
-  description = "KMS key for VPC flow logs in CloudWatch"
-  aws_region  = var.aws_region
-  alias_name  = "alias/${var.project_name}-${var.environment}-vpc-flow-logs"
-  tags        = local.common_tags
-}
-
 module "network" {
   source = "./modules/network"
 
@@ -54,7 +45,6 @@ module "network" {
   public_subnet_cidrs       = var.public_subnet_cidrs
   private_app_subnet_cidrs  = var.private_app_subnet_cidrs
   private_db_subnet_cidrs   = var.private_db_subnet_cidrs
-  vpc_flow_logs_kms_key_arn = module.kms_vpc_flow_logs.key_arn
   tags                      = local.common_tags
 }
 
