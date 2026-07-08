@@ -10,7 +10,30 @@ import './style.css';
   If you run locally, you can override this with:
   VITE_API_BASE_URL=http://localhost:8000/api
 */
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+const ENV_API_BASE = import.meta.env.VITE_API_BASE_URL;
+
+function getApiBaseCandidates() {
+  if (ENV_API_BASE) {
+    return [ENV_API_BASE.replace(/\/$/, '')];
+  }
+
+  const host = window.location.hostname;
+  const protocol = window.location.protocol;
+
+  const candidates = ['/api'];
+
+  if (host === 'localhost' || host === '127.0.0.1') {
+    candidates.push('http://localhost:8000');
+    candidates.push('http://127.0.0.1:8000');
+  } else {
+    candidates.push(`${protocol}//${host}:8000`);
+  }
+
+  return [...new Set(candidates.map((base) => base.replace(/\/$/, '')))].filter(Boolean);
+}
+
+const API_BASE_CANDIDATES = getApiBaseCandidates();
+let activeApiBase = API_BASE_CANDIDATES[0] || '/api';
 
 function normalizeTodos(data) {
   if (Array.isArray(data)) return data;
@@ -20,31 +43,47 @@ function normalizeTodos(data) {
 }
 
 async function requestJson(path, options = {}) {
-  const url = `${API_BASE}${path}`;
+  const bases = [activeApiBase, ...API_BASE_CANDIDATES.filter((base) => base !== activeApiBase)];
+  let lastError = null;
 
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {})
+  for (const base of bases) {
+    const url = `${base}${path}`;
+
+    try {
+      const hasBody = options.body !== undefined;
+      const res = await fetch(url, {
+        ...options,
+        headers: {
+          ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+          ...(options.headers || {})
+        }
+      });
+
+      const contentType = res.headers.get('content-type') || '';
+      const body = contentType.includes('application/json')
+        ? await res.json().catch(() => null)
+        : await res.text().catch(() => '');
+
+      if (!res.ok) {
+        const detail =
+          typeof body === 'string'
+            ? body
+            : body?.detail || body?.message || JSON.stringify(body);
+
+        lastError = new Error(
+          `API request failed at ${base}: ${res.status} ${res.statusText}${detail ? ` - ${detail}` : ''}`
+        );
+        continue;
+      }
+
+      activeApiBase = base;
+      return body;
+    } catch (err) {
+      lastError = new Error(`API unreachable at ${base}: ${err.message}`);
     }
-  });
-
-  const contentType = res.headers.get('content-type') || '';
-  const body = contentType.includes('application/json')
-    ? await res.json().catch(() => null)
-    : await res.text().catch(() => '');
-
-  if (!res.ok) {
-    const detail =
-      typeof body === 'string'
-        ? body
-        : body?.detail || body?.message || JSON.stringify(body);
-
-    throw new Error(`API request failed: ${res.status} ${res.statusText}${detail ? ` - ${detail}` : ''}`);
   }
 
-  return body;
+  throw lastError || new Error('API request failed and no endpoint responded.');
 }
 
 function App() {
@@ -64,7 +103,7 @@ function App() {
     } catch (err) {
       setTodos([]);
       setError(
-        `${err.message}. Confirm the frontend Nginx proxy routes /api to the backend EC2 on port 8000 and that the backend can reach RDS.`
+        `${err.message}. Tried: ${API_BASE_CANDIDATES.join(', ')}. Confirm frontend proxying and backend health.`
       );
     } finally {
       setLoading(false);
