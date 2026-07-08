@@ -84,6 +84,8 @@ module "security_integration" {
   enable_sonarqube        = var.enable_sonarqube
   sonarqube_instance_type = var.sonarqube_instance_type
   sonarqube_version       = var.sonarqube_version
+  prometheus_image        = var.prometheus_image
+  grafana_image           = var.grafana_image
   user_data_template_path = "${path.module}/templates/user_data_sonarqube.sh.tftpl"
   tags                    = local.common_tags
 }
@@ -159,5 +161,3 @@ module "frontend_compute" {
   tags       = local.common_tags
   depends_on = [module.security_integration]
 }
-
-

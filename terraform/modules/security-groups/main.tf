@@ -120,6 +120,22 @@ resource "aws_security_group" "sonarqube" {
   }
 
   ingress {
+    description = "Grafana web UI from allowed CIDR"
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = [local.sonarqube_allowed_cidr]
+  }
+
+  ingress {
+    description = "Prometheus web UI from allowed CIDR"
+    from_port   = 9090
+    to_port     = 9090
+    protocol    = "tcp"
+    cidr_blocks = [local.sonarqube_allowed_cidr]
+  }
+
+  ingress {
     description = "SSH from allowed CIDR"
     from_port   = 22
     to_port     = 22

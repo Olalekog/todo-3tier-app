@@ -143,3 +143,14 @@ variable "sonarqube_version" {
   default     = "10.4.1.88267"
 }
 
+variable "prometheus_image" {
+  description = "Prometheus container image to run on the SonarQube EC2 instance."
+  type        = string
+  default     = "prom/prometheus:latest"
+}
+
+variable "grafana_image" {
+  description = "Grafana container image to run on the SonarQube EC2 instance."
+  type        = string
+  default     = "grafana/grafana-oss:latest"
+}

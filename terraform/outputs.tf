@@ -23,3 +23,12 @@ output "sonarqube_url" {
   value       = module.security_integration.sonarqube_url
 }
 
+output "prometheus_url" {
+  description = "Prometheus URL (only set when enable_sonarqube = true)."
+  value       = module.security_integration.prometheus_url
+}
+
+output "grafana_url" {
+  description = "Grafana URL (only set when enable_sonarqube = true)."
+  value       = module.security_integration.grafana_url
+}

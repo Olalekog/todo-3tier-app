@@ -58,6 +58,8 @@ module "sonarqube_compute" {
 
   user_data_template_vars = {
     sonarqube_version = var.sonarqube_version
+    prometheus_image  = var.prometheus_image
+    grafana_image     = var.grafana_image
   }
 
   tags = merge(var.tags, {

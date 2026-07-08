@@ -4,28 +4,65 @@ set -euo pipefail
 exec > >(tee /var/log/user-data-sonarqube.log | logger -t user-data-sonarqube -s 2>/dev/console) 2>&1
 
 SONARQUBE_VERSION="${sonarqube_version}"
+PROMETHEUS_IMAGE="${prometheus_image}"
+GRAFANA_IMAGE="${grafana_image}"
 SONAR_HOME="/opt/sonarqube"
+MONITORING_HOME="/opt/monitoring"
 
 echo "Installing SonarQube $${SONARQUBE_VERSION}..."
 
 apt-get update -y
-apt-get install -y openjdk-17-jre unzip wget
+apt-get install -y docker.io openjdk-17-jre unzip wget
 
 # Elasticsearch kernel requirements
 sysctl -w vm.max_map_count=524288
 sysctl -w fs.file-max=131072
 echo "vm.max_map_count=524288" >> /etc/sysctl.conf
-echo "fs.file-max=131072"      >> /etc/sysctl.conf
+echo "fs.file-max=131072" >> /etc/sysctl.conf
 
 # Dedicated system user
 useradd -r -m -s /bin/false sonarqube || true
 
-# Download and install
+# Download and install SonarQube
 SONAR_ZIP="sonarqube-$${SONARQUBE_VERSION}.zip"
 wget -q "https://binaries.sonarsource.com/Distribution/sonarqube/$${SONAR_ZIP}" -O /tmp/$${SONAR_ZIP}
 unzip -q /tmp/$${SONAR_ZIP} -d /opt
 mv /opt/sonarqube-$${SONARQUBE_VERSION} $${SONAR_HOME}
 chown -R sonarqube:sonarqube $${SONAR_HOME}
+
+echo "Configuring Prometheus and Grafana containers..."
+
+systemctl enable docker
+systemctl start docker
+
+mkdir -p \
+  $${MONITORING_HOME}/prometheus/data \
+  $${MONITORING_HOME}/grafana/data
+
+chown -R 472:472 $${MONITORING_HOME}/grafana
+chown -R 65534:65534 $${MONITORING_HOME}/prometheus/data
+
+docker network create monitoring || true
+docker rm -f prometheus grafana 2>/dev/null || true
+
+docker pull $${PROMETHEUS_IMAGE}
+docker pull $${GRAFANA_IMAGE}
+
+docker run -d \
+  --name prometheus \
+  --restart unless-stopped \
+  --network monitoring \
+  -p 9090:9090 \
+  -v $${MONITORING_HOME}/prometheus/data:/prometheus \
+  $${PROMETHEUS_IMAGE}
+
+docker run -d \
+  --name grafana \
+  --restart unless-stopped \
+  --network monitoring \
+  -p 3000:3000 \
+  -v $${MONITORING_HOME}/grafana/data:/var/lib/grafana \
+  $${GRAFANA_IMAGE}
 
 # Systemd unit
 cat > /etc/systemd/system/sonarqube.service <<'UNIT'
@@ -50,6 +87,14 @@ systemctl daemon-reload
 systemctl enable sonarqube
 systemctl start sonarqube
 
-PUBLIC_IP="$(curl -sf http://169.254.169.254/latest/meta-data/public-ipv4 || echo unknown)"
+TOKEN="$(curl -fsX PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600' || true)"
+if [ -n "$${TOKEN}" ]; then
+  PUBLIC_IP="$(curl -sf -H "X-aws-ec2-metadata-token: $${TOKEN}" http://169.254.169.254/latest/meta-data/public-ipv4 || echo unknown)"
+else
+  PUBLIC_IP="unknown"
+fi
+
 echo "SonarQube started. Access at http://$${PUBLIC_IP}:9000"
-echo "Default credentials: admin / admin — change on first login."
+echo "Prometheus started. Access at http://$${PUBLIC_IP}:9090"
+echo "Grafana started. Access at http://$${PUBLIC_IP}:3000"
+echo "Default credentials: admin / admin - change on first login."
