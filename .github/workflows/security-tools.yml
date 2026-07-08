@@ -92,6 +92,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  security-events: write
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
@@ -220,8 +221,15 @@ jobs:
           directory: terraform
           framework: terraform
           skip_check: BC_AWS_LOGGING_9,CKV2_AWS_11
-          soft_fail: false
-          output_format: cli
+          soft_fail: true
+          output_format: cli,sarif
+          output_file_path: console,checkov.sarif
+
+      - name: Upload Checkov SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov.sarif
 
   scan-source:
     name: SonarQube Source Scan
@@ -243,6 +251,8 @@ jobs:
             -Dsonar.projectKey=${{ vars.PROJECT_NAME }}-${{ needs.resolve.outputs.environment }}
             -Dsonar.projectName=${{ vars.PROJECT_NAME }}
             -Dsonar.sources=frontend/src,backend
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
@@ -305,8 +315,10 @@ jobs:
           path: .
 
       - name: Scan frontend image with Trivy
+        id: trivy_frontend_gate
+        continue-on-error: true
         if: needs.resolve.outputs.scan_frontend == 'true'
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           input: frontend-image.tar
           format: table
@@ -315,12 +327,65 @@ jobs:
           ignore-unfixed: true
 
       - name: Scan backend image with Trivy
+        id: trivy_backend_gate
+        continue-on-error: true
         if: needs.resolve.outputs.scan_backend == 'true'
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           input: backend-image.tar
           format: table
           exit-code: '1'
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+
+      - name: Generate frontend Trivy SARIF
+        if: always() && needs.resolve.outputs.scan_frontend == 'true'
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          input: frontend-image.tar
+          format: sarif
+          output: trivy-frontend.sarif
+          exit-code: '0'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Generate backend Trivy SARIF
+        if: always() && needs.resolve.outputs.scan_backend == 'true'
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          input: backend-image.tar
+          format: sarif
+          output: trivy-backend.sarif
+          exit-code: '0'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload frontend Trivy SARIF
+        if: always() && needs.resolve.outputs.scan_frontend == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-frontend.sarif
+
+      - name: Upload backend Trivy SARIF
+        if: always() && needs.resolve.outputs.scan_backend == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-backend.sarif
+
+      - name: Enforce Trivy gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FRONTEND_RESULT="${{ steps.trivy_frontend_gate.outcome || 'skipped' }}"
+          BACKEND_RESULT="${{ steps.trivy_backend_gate.outcome || 'skipped' }}"
+
+          echo "Frontend Trivy gate outcome: ${FRONTEND_RESULT}"
+          echo "Backend Trivy gate outcome: ${BACKEND_RESULT}"
+
+          if [[ "${FRONTEND_RESULT}" == "failure" || "${BACKEND_RESULT}" == "failure" ]]; then
+            echo "Trivy gate failed due to HIGH/CRITICAL findings."
+            exit 1
+          fi
 
