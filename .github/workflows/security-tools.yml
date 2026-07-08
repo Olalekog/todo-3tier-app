@@ -349,7 +349,7 @@ jobs:
         id: trivy_frontend_gate
         continue-on-error: true
         if: needs.resolve.outputs.scan_frontend == 'true'
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           input: frontend-image.tar
           format: table
@@ -361,7 +361,7 @@ jobs:
         id: trivy_backend_gate
         continue-on-error: true
         if: needs.resolve.outputs.scan_backend == 'true'
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           input: backend-image.tar
           format: table
@@ -371,7 +371,7 @@ jobs:
 
       - name: Generate frontend Trivy SARIF
         if: always() && needs.resolve.outputs.scan_frontend == 'true'
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           input: frontend-image.tar
           format: sarif
@@ -382,7 +382,7 @@ jobs:
 
       - name: Generate backend Trivy SARIF
         if: always() && needs.resolve.outputs.scan_backend == 'true'
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           input: backend-image.tar
           format: sarif
