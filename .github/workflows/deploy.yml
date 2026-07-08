@@ -167,7 +167,7 @@ jobs:
           if [[ "${WORKLOAD}" == "frontend" ]]; then
             TARGET_ARGS="-target=module.frontend_compute"
           elif [[ "${WORKLOAD}" == "backend" ]]; then
-            TARGET_ARGS="-target=module.backend_compute"
+            TARGET_ARGS="-target=module.backend_compute -target=module.frontend_compute"
           elif [[ "${WORKLOAD}" == "app" ]]; then
             TARGET_ARGS="-target=module.frontend_compute -target=module.backend_compute"
           fi

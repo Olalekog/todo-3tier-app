@@ -165,8 +165,8 @@ jobs:
           SCAN_BACKEND="${SCAN_BACKEND:-true}"
           SCAN_SOURCE="${SCAN_SOURCE:-true}"
 
-          if [[ "${SCAN_SOURCE}" == "true" && ( -z "${{ secrets.SONAR_TOKEN }}" || -z "${{ vars.SONAR_HOST_URL }}" ) ]]; then
-            echo "SonarQube secrets missing; source scan will be skipped."
+          if [[ "${SCAN_SOURCE}" == "true" && -z "${{ secrets.SONAR_TOKEN }}" ]]; then
+            echo "SonarQube token missing; source scan will be skipped."
             SCAN_SOURCE="false"
           fi
 
@@ -270,39 +270,77 @@ jobs:
         id: sonar_access
         shell: bash
         env:
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+          INITIAL_SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
         run: |
           set -euo pipefail
 
           RUNNER_IP="$(curl -fsS --connect-timeout 10 https://api.ipify.org)"
           RUNNER_CIDR="${RUNNER_IP}/32"
-          SONAR_HOST="$(python3 -c 'import os, urllib.parse; print(urllib.parse.urlparse(os.environ["SONAR_HOST_URL"]).hostname or "")')"
+          CANDIDATE_NAMES=("${PROJECT_NAME}-${ENVIRONMENT}-sonarqube" "${PROJECT_NAME}-dev-sonarqube")
 
-          if [[ -z "${RUNNER_IP}" || -z "${SONAR_HOST}" ]]; then
-            echo "Unable to resolve runner IP or SonarQube host."
+          if [[ -z "${RUNNER_IP}" ]]; then
+            echo "Unable to resolve runner public IP."
             exit 1
           fi
 
-          SONAR_IP="${SONAR_HOST}"
-          if ! [[ "${SONAR_IP}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            SONAR_IP="$(getent ahostsv4 "${SONAR_HOST}" | awk '{print $1; exit}')"
+          INSTANCE_ID=""
+          for INSTANCE_NAME in "${CANDIDATE_NAMES[@]}"; do
+            INSTANCE_ID="$(aws ec2 describe-instances \
+              --region "${AWS_REGION}" \
+              --filters "Name=tag:Name,Values=${INSTANCE_NAME}" "Name=instance-state-name,Values=pending,running" \
+              --query 'Reservations[].Instances[].InstanceId' \
+              --output text | awk '{print $1}')"
+
+            if [[ -n "${INSTANCE_ID}" && "${INSTANCE_ID}" != "None" ]]; then
+              echo "Found SonarQube instance ${INSTANCE_ID} by tag Name=${INSTANCE_NAME}"
+              break
+            fi
+          done
+
+          if [[ -z "${INSTANCE_ID}" || "${INSTANCE_ID}" == "None" ]]; then
+            SONAR_HOST="$(python3 -c 'import os, urllib.parse; print(urllib.parse.urlparse(os.environ.get("INITIAL_SONAR_HOST_URL", "")).hostname or "")')"
+            SONAR_IP="${SONAR_HOST}"
+            if [[ -n "${SONAR_IP}" ]]; then
+              if [[ ! "${SONAR_IP}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                SONAR_IP="$(getent ahostsv4 "${SONAR_HOST}" | awk '{print $1; exit}')"
+              fi
+            fi
+
+            if [[ -n "${SONAR_IP}" ]]; then
+              INSTANCE_ID="$(aws ec2 describe-instances \
+                --region "${AWS_REGION}" \
+                --filters "Name=ip-address,Values=${SONAR_IP}" "Name=instance-state-name,Values=pending,running" \
+                --query 'Reservations[].Instances[].InstanceId' \
+                --output text | awk '{print $1}')"
+            fi
           fi
 
-          if [[ -z "${SONAR_IP}" ]]; then
-            echo "Unable to resolve SonarQube host ${SONAR_HOST} to an IPv4 address."
+          if [[ -z "${INSTANCE_ID}" || "${INSTANCE_ID}" == "None" ]]; then
+            echo "No running SonarQube EC2 instance found. Checked tags: ${CANDIDATE_NAMES[*]}."
+            echo "Initial SONAR_HOST_URL was: ${INITIAL_SONAR_HOST_URL:-unset}"
             exit 1
           fi
+
+          SONAR_IP="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)"
 
           SG_IDS="$(aws ec2 describe-instances \
             --region "${AWS_REGION}" \
-            --filters "Name=ip-address,Values=${SONAR_IP}" "Name=instance-state-name,Values=pending,running" \
+            --instance-ids "${INSTANCE_ID}" \
             --query 'Reservations[].Instances[].SecurityGroups[].GroupId' \
             --output text)"
 
-          if [[ -z "${SG_IDS}" || "${SG_IDS}" == "None" ]]; then
-            echo "No running SonarQube EC2 instance found with public IP ${SONAR_IP}."
+          if [[ -z "${SONAR_IP}" || "${SONAR_IP}" == "None" || -z "${SG_IDS}" || "${SG_IDS}" == "None" ]]; then
+            echo "SonarQube instance ${INSTANCE_ID} is missing a public IP or security group."
             exit 1
           fi
+
+          echo "SONAR_HOST_URL=http://${SONAR_IP}:9000" >> "$GITHUB_ENV"
+          echo "Resolved SonarQube URL: http://${SONAR_IP}:9000"
 
           for SG_ID in ${SG_IDS}; do
             echo "Authorizing ${RUNNER_CIDR} for ${SG_ID}:9000"
@@ -318,8 +356,6 @@ jobs:
 
       - name: Verify SonarQube scanner endpoint
         shell: bash
-        env:
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
         run: |
           set -euo pipefail
 
@@ -339,7 +375,6 @@ jobs:
             -Dsonar.qualitygate.wait=false
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
 
       - name: SonarQube scan (enforce quality gate)
         if: needs.resolve.outputs.environment != 'dev'
@@ -355,7 +390,6 @@ jobs:
             -Dsonar.qualitygate.timeout=300
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
 
       - name: Revoke runner SonarQube access
         if: always() && steps.sonar_access.outputs.security_group_ids != ''

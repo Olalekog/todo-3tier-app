@@ -6,17 +6,14 @@ exec > >(tee /var/log/user-data-frontend.log | logger -t user-data-frontend -s 2
 AWS_REGION="${aws_region}"
 IMAGE_URI="${image_uri}"
 BACKEND_HOST="${backend_private_ip}"
+PROJECT_NAME="${project_name}"
+ENVIRONMENT="${environment}"
 
 CONTAINER_NAME="todo-frontend"
 
 echo "Starting frontend user data..."
 echo "IMAGE_URI=$${IMAGE_URI}"
 echo "BACKEND_HOST=$${BACKEND_HOST}"
-
-if [[ -z "$${BACKEND_HOST}" ]]; then
-  echo "ERROR: BACKEND_HOST is empty. Root module must pass backend_private_ip = module.backend_compute.private_ip"
-  exit 1
-fi
 
 apt-get update -y
 apt-get install -y ca-certificates curl unzip jq netcat-openbsd docker.io
@@ -30,6 +27,24 @@ if ! command -v aws >/dev/null 2>&1; then
   unzip -q /tmp/awscliv2.zip -d /tmp
   /tmp/aws/install
 fi
+
+echo "Resolving current backend private IP by EC2 tag..."
+CURRENT_BACKEND_HOST="$(aws ec2 describe-instances \
+  --region "$${AWS_REGION}" \
+  --filters "Name=tag:Name,Values=$${PROJECT_NAME}-$${ENVIRONMENT}-backend" "Name=instance-state-name,Values=pending,running" \
+  --query 'Reservations[].Instances[].PrivateIpAddress' \
+  --output text | awk '{print $1}')"
+
+if [[ -n "$${CURRENT_BACKEND_HOST}" && "$${CURRENT_BACKEND_HOST}" != "None" ]]; then
+  BACKEND_HOST="$${CURRENT_BACKEND_HOST}"
+fi
+
+if [[ -z "$${BACKEND_HOST}" || "$${BACKEND_HOST}" == "None" ]]; then
+  echo "ERROR: Could not resolve backend private IP from user data or EC2 tag $${PROJECT_NAME}-$${ENVIRONMENT}-backend."
+  exit 1
+fi
+
+echo "Resolved BACKEND_HOST=$${BACKEND_HOST}"
 
 REGISTRY="$(echo "$${IMAGE_URI}" | cut -d/ -f1)"
 REPOSITORY_NAME="$(echo "$${IMAGE_URI}" | cut -d/ -f2- | cut -d: -f1)"

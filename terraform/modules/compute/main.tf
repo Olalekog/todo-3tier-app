@@ -31,6 +31,11 @@ resource "aws_iam_role_policy" "ecr_read" {
         Resource = "*"
       },
       {
+        Effect   = "Allow"
+        Action   = ["ec2:DescribeInstances"]
+        Resource = "*"
+      },
+      {
         Effect = "Allow"
         Action = [
           "ecr:BatchCheckLayerAvailability",
@@ -57,6 +62,8 @@ resource "aws_iam_instance_profile" "this" {
 
 locals {
   rendered_user_data = templatefile(var.user_data_template_path, merge({
+    project_name       = var.project_name
+    environment        = var.environment
     aws_region         = var.aws_region
     image_uri          = var.image_uri
     db_host            = var.db_host
