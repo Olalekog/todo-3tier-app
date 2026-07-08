@@ -1,3 +1,22 @@
+data "aws_subnet" "sonarqube" {
+  count = var.enable_sonarqube ? 1 : 0
+  id    = var.sonarqube_subnet_id
+}
+
+check "sonarqube_subnet_in_vpc" {
+  assert {
+    condition     = !var.enable_sonarqube || data.aws_subnet.sonarqube[0].vpc_id == var.vpc_id
+    error_message = "SonarQube subnet must belong to the same VPC as the app infrastructure."
+  }
+}
+
+check "sonarqube_subnet_is_public" {
+  assert {
+    condition     = !var.enable_sonarqube || data.aws_subnet.sonarqube[0].map_public_ip_on_launch
+    error_message = "SonarQube must be deployed in a public subnet with auto-assign public IP enabled."
+  }
+}
+
 module "security_groups" {
   source = "../../modules/security-groups"
 
