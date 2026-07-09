@@ -85,7 +85,7 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform init and validate
-        working-directory: terraform
+        working-directory: terraform/security-tools/deploy
         shell: bash
         run: |
           set -euo pipefail
