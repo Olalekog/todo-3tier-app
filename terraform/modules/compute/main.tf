@@ -81,6 +81,7 @@ resource "aws_instance" "this" {
   subnet_id                   = var.subnet_id
   vpc_security_group_ids      = [var.security_group_id]
   associate_public_ip_address = var.associate_public_ip_address
+  disable_api_termination     = var.disable_api_termination
   key_name                    = var.key_name
   iam_instance_profile        = aws_iam_instance_profile.this.name
   ebs_optimized               = true
@@ -96,7 +97,7 @@ resource "aws_instance" "this" {
   }
 
   user_data                   = local.rendered_user_data
-  user_data_replace_on_change = true
+  user_data_replace_on_change = var.user_data_replace_on_change
 
   tags = merge(var.tags, {
     Name = "${var.project_name}-${var.environment}-${var.workload_name}"

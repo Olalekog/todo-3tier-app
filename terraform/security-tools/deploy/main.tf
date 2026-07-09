@@ -3,6 +3,29 @@ data "aws_subnet" "sonarqube" {
   id    = var.sonarqube_subnet_id
 }
 
+data "aws_instances" "existing_sonarqube" {
+  count = var.enable_sonarqube ? 1 : 0
+
+  filter {
+    name   = "tag:Name"
+    values = ["${var.project_name}-${var.environment}-sonarqube"]
+  }
+
+  filter {
+    name   = "instance-state-name"
+    values = ["pending", "running", "stopping", "stopped"]
+  }
+}
+
+data "aws_instance" "existing_sonarqube" {
+  count       = var.enable_sonarqube && length(data.aws_instances.existing_sonarqube[0].ids) > 0 ? 1 : 0
+  instance_id = data.aws_instances.existing_sonarqube[0].ids[0]
+}
+
+locals {
+  sonarqube_ami_id = length(data.aws_instance.existing_sonarqube) > 0 ? data.aws_instance.existing_sonarqube[0].ami : var.ami_id
+}
+
 check "sonarqube_subnet_in_vpc" {
   assert {
     condition     = !var.enable_sonarqube || try(data.aws_subnet.sonarqube[0].vpc_id, "") == var.vpc_id
@@ -40,12 +63,14 @@ module "sonarqube_compute" {
   environment                 = var.environment
   workload_name               = "sonarqube"
   aws_region                  = var.aws_region
-  ami_id                      = var.ami_id
+  ami_id                      = local.sonarqube_ami_id
   instance_type               = var.sonarqube_instance_type
   key_name                    = var.key_name == "" ? null : var.key_name
   subnet_id                   = var.sonarqube_subnet_id
   security_group_id           = module.security_groups.sonarqube_security_group_id
   associate_public_ip_address = true
+  disable_api_termination     = true
+  user_data_replace_on_change = false
 
   image_uri               = ""
   ecr_repository_arns     = []

@@ -50,6 +50,18 @@ variable "associate_public_ip_address" {
   default     = false
 }
 
+variable "disable_api_termination" {
+  description = "Whether to protect the EC2 instance from API termination."
+  type        = bool
+  default     = false
+}
+
+variable "user_data_replace_on_change" {
+  description = "Whether a user data change should replace the EC2 instance."
+  type        = bool
+  default     = true
+}
+
 variable "image_uri" {
   description = "Full Docker image URI."
   type        = string
