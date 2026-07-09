@@ -467,7 +467,18 @@ jobs:
             --instance-ids "${INSTANCE_ID}" \
             --query 'Reservations[].Instances[].{InstanceId:InstanceId,State:State.Name,Name:Tags[?Key==`Name`]|[0].Value,PublicIp:PublicIpAddress,PrivateIp:PrivateIpAddress,SecurityGroups:SecurityGroups[].GroupId,LaunchTime:LaunchTime}'
 
-          if curl -fsS --connect-timeout 10 --max-time 15 "${FRONTEND_URL}" >/dev/null; then
+          FRONTEND_READY=false
+          for i in {1..30}; do
+            if curl -fsS --connect-timeout 10 --max-time 15 "${FRONTEND_URL}" >/dev/null; then
+              FRONTEND_READY=true
+              break
+            fi
+
+            echo "Frontend HTTP check failed. Attempt ${i}/30; waiting 15s..."
+            sleep 15
+          done
+
+          if [[ "${FRONTEND_READY}" == "true" ]]; then
             echo "Frontend HTTP check passed."
           else
             echo "Frontend HTTP check failed. Recent console output follows."
@@ -476,4 +487,26 @@ jobs:
               --instance-id "${INSTANCE_ID}" \
               --latest \
               --output text || true
+
+            echo "Trying SSM diagnostics from inside the frontend instance."
+            COMMAND_ID="$(aws ssm send-command \
+              --region "${AWS_REGION}" \
+              --instance-ids "${INSTANCE_ID}" \
+              --document-name "AWS-RunShellScript" \
+              --comment "Frontend diagnostics after failed HTTP check" \
+              --parameters 'commands=["cloud-init status --long || true","systemctl status nginx --no-pager || true","systemctl status docker --no-pager || true","ss -ltnp || true","docker ps -a || true","docker logs todo-frontend --tail 120 || true","tail -n 200 /var/log/user-data-frontend.log || true"]' \
+              --query 'Command.CommandId' \
+              --output text 2>/dev/null || true)"
+
+            if [[ -n "${COMMAND_ID}" && "${COMMAND_ID}" != "None" ]]; then
+              sleep 10
+              aws ssm get-command-invocation \
+                --region "${AWS_REGION}" \
+                --command-id "${COMMAND_ID}" \
+                --instance-id "${INSTANCE_ID}" \
+                --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+                --output text || true
+            else
+              echo "Could not start SSM diagnostics. The instance may not be registered with SSM yet."
+            fi
           fi
