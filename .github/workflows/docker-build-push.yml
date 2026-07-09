@@ -205,10 +205,11 @@ jobs:
             fi
           fi
 
-          IMAGE_TAG="${GITHUB_SHA}"
+          SHORT_SHA="${GITHUB_SHA::12}"
+          IMAGE_TAG="${SHORT_SHA}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
 
-          FRONTEND_IMAGE_TAG="latest"
-          BACKEND_IMAGE_TAG="latest"
+          FRONTEND_IMAGE_TAG="${IMAGE_TAG}"
+          BACKEND_IMAGE_TAG="${IMAGE_TAG}"
 
           if [[ "${BUILD_FRONTEND}" == "true" ]]; then
             FRONTEND_IMAGE_TAG="${IMAGE_TAG}"
@@ -465,31 +466,25 @@ jobs:
             aws ecr create-repository --region "${AWS_REGION}" --repository-name "${PROJECT_NAME}/${ENVIRONMENT}/todo-backend" --image-scanning-configuration scanOnPush=true
           fi
 
-      - name: Push frontend image with SHA and latest tags
+      - name: Push frontend image with SHA tag
         if: needs.resolve.outputs.build_frontend == 'true'
         shell: bash
         run: |
           set -euo pipefail
           REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
           IMAGE_SHA="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO}:${IMAGE_TAG}"
-          IMAGE_LATEST="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO}:latest"
 
-          docker tag "${IMAGE_SHA}" "${IMAGE_LATEST}"
           docker push "${IMAGE_SHA}"
-          docker push "${IMAGE_LATEST}"
 
-      - name: Push backend image with SHA and latest tags
+      - name: Push backend image with SHA tag
         if: needs.resolve.outputs.build_backend == 'true'
         shell: bash
         run: |
           set -euo pipefail
           REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
           IMAGE_SHA="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO}:${IMAGE_TAG}"
-          IMAGE_LATEST="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO}:latest"
 
-          docker tag "${IMAGE_SHA}" "${IMAGE_LATEST}"
           docker push "${IMAGE_SHA}"
-          docker push "${IMAGE_LATEST}"
 
   deploy:
     name: Deploy to Dev
