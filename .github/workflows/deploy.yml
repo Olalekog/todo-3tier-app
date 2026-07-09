@@ -429,3 +429,51 @@ jobs:
             -out=tfplan
 
           terraform apply -auto-approve tfplan
+
+      - name: Show frontend URL and diagnostics
+        if: always()
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FRONTEND_URL="$(terraform output -raw frontend_url 2>/dev/null || true)"
+          FRONTEND_IP="$(terraform output -raw frontend_public_ip 2>/dev/null || true)"
+
+          if [[ -n "${FRONTEND_URL}" ]]; then
+            echo "Frontend URL: ${FRONTEND_URL}"
+          fi
+
+          if [[ -z "${FRONTEND_IP}" ]]; then
+            echo "No frontend public IP found in Terraform output."
+            exit 0
+          fi
+
+          echo "Frontend public IP: ${FRONTEND_IP}"
+
+          INSTANCE_ID="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --filters "Name=ip-address,Values=${FRONTEND_IP}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query 'Reservations[].Instances[].InstanceId' \
+            --output text | awk '{print $1}')"
+
+          if [[ -z "${INSTANCE_ID}" || "${INSTANCE_ID}" == "None" ]]; then
+            echo "No active EC2 instance currently has public IP ${FRONTEND_IP}."
+            exit 0
+          fi
+
+          aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --query 'Reservations[].Instances[].{InstanceId:InstanceId,State:State.Name,Name:Tags[?Key==`Name`]|[0].Value,PublicIp:PublicIpAddress,PrivateIp:PrivateIpAddress,SecurityGroups:SecurityGroups[].GroupId,LaunchTime:LaunchTime}'
+
+          if curl -fsS --connect-timeout 10 --max-time 15 "${FRONTEND_URL}" >/dev/null; then
+            echo "Frontend HTTP check passed."
+          else
+            echo "Frontend HTTP check failed. Recent console output follows."
+            aws ec2 get-console-output \
+              --region "${AWS_REGION}" \
+              --instance-id "${INSTANCE_ID}" \
+              --latest \
+              --output text || true
+          fi

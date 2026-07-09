@@ -40,8 +40,9 @@ if [[ -n "$${CURRENT_BACKEND_HOST}" && "$${CURRENT_BACKEND_HOST}" != "None" ]]; 
 fi
 
 if [[ -z "$${BACKEND_HOST}" || "$${BACKEND_HOST}" == "None" ]]; then
-  echo "ERROR: Could not resolve backend private IP from user data or EC2 tag $${PROJECT_NAME}-$${ENVIRONMENT}-backend."
-  exit 1
+  echo "WARNING: Could not resolve backend private IP from user data or EC2 tag $${PROJECT_NAME}-$${ENVIRONMENT}-backend."
+  echo "The frontend will still start; API requests will fail until the backend is reachable."
+  BACKEND_HOST="127.0.0.1"
 fi
 
 echo "Resolved BACKEND_HOST=$${BACKEND_HOST}"
@@ -78,19 +79,21 @@ docker rm -f "$${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
 if [[ "$${IMAGE_READY}" == "true" ]]; then
   echo "Checking backend TCP connectivity from frontend host..."
-  for i in $(seq 1 30); do
+  BACKEND_REACHABLE=false
+  for i in $(seq 1 12); do
     if nc -vz "$${BACKEND_HOST}" 8000; then
+      BACKEND_REACHABLE=true
       break
     fi
 
-    if [[ "$${i}" == "30" ]]; then
-      echo "ERROR: Backend is not reachable at $${BACKEND_HOST}:8000 from frontend host."
-      exit 1
-    fi
-
-    echo "Backend not reachable yet. Attempt $${i}/30"
+    echo "Backend not reachable yet. Attempt $${i}/12"
     sleep 10
   done
+
+  if [[ "$${BACKEND_REACHABLE}" != "true" ]]; then
+    echo "WARNING: Backend is not reachable at $${BACKEND_HOST}:8000 from frontend host."
+    echo "Starting the frontend anyway so the web UI remains reachable."
+  fi
 
   docker run -d   --name "$${CONTAINER_NAME}"   --restart unless-stopped   -p 80:80   -e BACKEND_HOST="$${BACKEND_HOST}"   "$${IMAGE_URI}"
 else
@@ -119,8 +122,11 @@ EOF
 fi
 
 for i in $(seq 1 30); do
-  if curl -fsS http://localhost >/dev/null 2>&1 && { [[ "$${IMAGE_READY}" != "true" ]] || curl -fsS http://localhost/api/health >/dev/null 2>&1; }; then
+  if curl -fsS http://localhost >/dev/null 2>&1; then
     echo "Frontend is healthy."
+    if [[ "$${IMAGE_READY}" == "true" ]]; then
+      curl -fsS http://localhost/api/health >/dev/null 2>&1 || echo "WARNING: Frontend is up, but backend API health check is not reachable yet."
+    fi
     docker ps
     exit 0
   fi
