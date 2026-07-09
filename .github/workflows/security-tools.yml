@@ -6,6 +6,8 @@ on:
       - dev
     paths:
       - "terraform/**"
+      - "!terraform/security-tools/**"
+      - "!terraform/templates/user_data_sonarqube.sh.tftpl"
       - "frontend/**"
       - "backend/**"
       - ".github/workflows/security-tools.yml"
@@ -354,14 +356,20 @@ jobs:
           echo "runner_cidr=${RUNNER_CIDR}" >> "$GITHUB_OUTPUT"
           echo "security_group_ids=${SG_IDS}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify SonarQube scanner endpoint
+      - name: Verify SonarQube is ready
         shell: bash
         run: |
           set -euo pipefail
 
-          VERSION_URL="${SONAR_HOST_URL%/}/api/v2/analysis/version"
-          echo "Checking ${VERSION_URL}"
-          curl -fsS --connect-timeout 10 --max-time 20 "${VERSION_URL}" >/dev/null
+          STATUS_URL="${SONAR_HOST_URL%/}/api/system/status"
+          echo "Checking ${STATUS_URL}"
+
+          STATUS="$(curl -fsS \
+            --connect-timeout 10 \
+            --max-time 20 \
+            "${STATUS_URL}")"
+
+          jq -e '.status == "UP"' <<<"${STATUS}" >/dev/null
 
       - name: SonarQube scan (non-blocking quality gate for dev)
         if: needs.resolve.outputs.environment == 'dev'

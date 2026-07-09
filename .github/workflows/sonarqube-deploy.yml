@@ -6,7 +6,10 @@ on:
       - dev
     paths:
       - "terraform/security-tools/deploy/**"
+      - "terraform/modules/compute/**"
+      - "terraform/modules/security-groups/**"
       - "terraform/templates/user_data_sonarqube.sh.tftpl"
+      - "terraform/environments/dev.tfvars"
       - ".github/workflows/sonarqube-deploy.yml"
   workflow_dispatch:
 
