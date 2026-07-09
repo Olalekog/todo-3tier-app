@@ -9,6 +9,12 @@ on:
       - "terraform/templates/user_data_sonarqube.sh.tftpl"
       - ".github/workflows/sonarqube-deploy.yml"
   workflow_dispatch:
+    inputs:
+      allow_recreate:
+        description: Allow replacement of the SonarQube EC2 instance
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   id-token: write
@@ -35,8 +41,14 @@ jobs:
       tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
       state_key: ${{ steps.resolve.outputs.state_key }}
       app_state_key: ${{ steps.resolve.outputs.app_state_key }}
+      allow_recreate: ${{ steps.resolve.outputs.allow_recreate }}
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Resolve inputs
         id: resolve
         shell: bash
@@ -44,26 +56,49 @@ jobs:
           set -euo pipefail
 
           ACTION="apply"
+          ALLOW_RECREATE="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.allow_recreate || 'false' }}"
 
           TFVARS_FILE="sonarqube.tfvars"
           STATE_KEY="${PROJECT_NAME}/dev/security-tools/sonarqube.tfstate"
           APP_STATE_KEY="${PROJECT_NAME}/dev/terraform.tfstate"
 
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            BEFORE="${{ github.event.before }}"
+            AFTER="${{ github.sha }}"
+
+            if [[ -z "${BEFORE}" || "${BEFORE}" == "0000000000000000000000000000000000000000" ]]; then
+              CHANGED_FILES="$(git diff-tree --no-commit-id --name-only -r "${AFTER}")"
+            else
+              CHANGED_FILES="$(git diff --name-only "${BEFORE}" "${AFTER}")"
+            fi
+
+            echo "Changed files:"
+            echo "${CHANGED_FILES}"
+
+            if echo "${CHANGED_FILES}" | grep -Eq '^(terraform/security-tools/deploy/|terraform/templates/user_data_sonarqube\.sh\.tftpl)'; then
+              ALLOW_RECREATE="true"
+            fi
+          fi
+
           echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
           echo "state_key=${STATE_KEY}" >> "$GITHUB_OUTPUT"
           echo "app_state_key=${APP_STATE_KEY}" >> "$GITHUB_OUTPUT"
+          echo "allow_recreate=${ALLOW_RECREATE}" >> "$GITHUB_OUTPUT"
 
   plan-sonarqube:
     name: Terraform Plan SonarQube
     runs-on: ubuntu-latest
     needs:
       - resolve
+    outputs:
+      has_changes: ${{ steps.plan.outputs.has_changes }}
     env:
       TFVARS_FILE: ${{ needs.resolve.outputs.tfvars_file }}
       STATE_KEY: ${{ needs.resolve.outputs.state_key }}
       ENVIRONMENT: dev
       ALLOWED_SSH_CIDR: 0.0.0.0/0
       USER_DATA_TEMPLATE_PATH: ../../templates/user_data_sonarqube.sh.tftpl
+      ALLOW_RECREATE: ${{ needs.resolve.outputs.allow_recreate }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -220,6 +255,7 @@ jobs:
           fi
 
       - name: Terraform plan SonarQube
+        id: plan
         working-directory: terraform/security-tools/deploy
         shell: bash
         env:
@@ -227,7 +263,10 @@ jobs:
           SONARQUBE_SUBNET_ID: ${{ steps.network.outputs.sonarqube_subnet_id }}
         run: |
           set -euo pipefail
+
+          set +e
           terraform plan \
+            -detailed-exitcode \
             -var-file="${TFVARS_FILE}" \
             -var="aws_region=${AWS_REGION}" \
             -var="project_name=${PROJECT_NAME}" \
@@ -237,6 +276,36 @@ jobs:
             -var="allowed_ssh_cidr=${ALLOWED_SSH_CIDR}" \
             -var="user_data_template_path=${USER_DATA_TEMPLATE_PATH}" \
             -out=sonarqube-tfplan
+          PLAN_EXIT=$?
+          set -e
+
+          if [[ "${PLAN_EXIT}" == "0" ]]; then
+            echo "SonarQube plan has no changes."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${PLAN_EXIT}" != "2" ]]; then
+            exit "${PLAN_EXIT}"
+          fi
+
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          terraform show -json sonarqube-tfplan > sonarqube-tfplan.json
+
+          if jq -e '
+            .resource_changes[]?
+            | select(.address == "module.sonarqube_compute[0].aws_instance.this")
+            | select((.change.actions == ["delete","create"]) or (.change.actions == ["create","delete"]))
+          ' sonarqube-tfplan.json >/dev/null; then
+            if [[ "${ALLOW_RECREATE}" != "true" ]]; then
+              echo "SonarQube EC2 replacement is planned, but no SonarQube infrastructure file changed."
+              echo "This protects the existing SonarQube instance from recreation caused by workflow-only changes or drift."
+              echo "Use workflow_dispatch with allow_recreate=true when replacement is intentional."
+              exit 1
+            fi
+
+            echo "SonarQube EC2 replacement is allowed because SonarQube infrastructure changed or manual override was selected."
+          fi
 
       - name: Upload SonarQube plan
         uses: actions/upload-artifact@v4
@@ -251,6 +320,7 @@ jobs:
     needs:
       - resolve
       - plan-sonarqube
+    if: needs.plan-sonarqube.outputs.has_changes == 'true'
     env:
       TFVARS_FILE: ${{ needs.resolve.outputs.tfvars_file }}
       STATE_KEY: ${{ needs.resolve.outputs.state_key }}
