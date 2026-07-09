@@ -14,11 +14,12 @@ allowed_ssh_cidr  = "0.0.0.0/0"
 
 key_name = ""
 
-frontend_instance_type = "t2.medium"
+frontend_instance_type = "t2.micro"
 backend_instance_type  = "t2.micro"
 
 frontend_image_tag = "latest"
 backend_image_tag  = "latest"
+
 
 db_name              = "todoapp"
 db_username          = "todo_admin"
