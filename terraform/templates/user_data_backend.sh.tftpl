@@ -24,11 +24,64 @@ if [[ -z "$${DB_HOST}" || "$${DB_HOST}" == "<RDS_ENDPOINT>" ]]; then
   exit 1
 fi
 
-apt-get update -y
-apt-get install -y ca-certificates curl unzip jq netcat-openbsd docker.io
+retry() {
+  local attempts="$1"
+  shift
+  local delay=10
 
-systemctl enable docker
-systemctl start docker
+  for attempt in $(seq 1 "$${attempts}"); do
+    if "$@"; then
+      return 0
+    fi
+
+    echo "Command failed on attempt $${attempt}/$${attempts}: $*"
+    sleep "$${delay}"
+  done
+
+  return 1
+}
+
+export DEBIAN_FRONTEND=noninteractive
+retry 6 apt-get update -y
+retry 6 apt-get install -y ca-certificates curl unzip jq netcat-openbsd snapd
+
+if command -v snap >/dev/null 2>&1; then
+  snap list amazon-ssm-agent >/dev/null 2>&1 || snap install amazon-ssm-agent --classic || true
+  systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service >/dev/null 2>&1 || snap start amazon-ssm-agent || true
+fi
+
+ensure_docker() {
+  if command -v docker >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Installing Docker from Ubuntu package repositories."
+  retry 6 apt-get install -y docker.io || true
+
+  if ! command -v docker >/dev/null 2>&1 && command -v snap >/dev/null 2>&1; then
+    echo "Docker package is still unavailable; trying snap docker as a fallback."
+    snap install docker || true
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "ERROR: Docker is not installed."
+    return 1
+  fi
+
+  systemctl enable --now docker >/dev/null 2>&1 || service docker start || snap start docker || true
+
+  if ! docker version >/dev/null 2>&1; then
+    echo "ERROR: Docker command exists, but the daemon is not responding."
+    systemctl status docker --no-pager || true
+    snap services docker || true
+    return 1
+  fi
+
+  docker version
+  return 0
+}
+
+ensure_docker
 
 if ! command -v aws >/dev/null 2>&1; then
   curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
