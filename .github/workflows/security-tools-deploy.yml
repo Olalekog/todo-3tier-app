@@ -249,6 +249,87 @@ jobs:
           echo "vpc_id=${VPC_ID}" >> "$GITHUB_OUTPUT"
           echo "subnet_id=${SUBNET_ID}" >> "$GITHUB_OUTPUT"
 
+      - name: Import existing security tools resources
+        working-directory: terraform/security-tools/deploy
+        shell: bash
+        env:
+          VPC_ID: ${{ steps.network.outputs.vpc_id }}
+          SUBNET_ID: ${{ steps.network.outputs.subnet_id }}
+        run: |
+          set -euo pipefail
+
+          ROLE_NAME="${PROJECT_NAME}-${ENVIRONMENT}-sonarqube-ec2-role"
+          PROFILE_NAME="${PROJECT_NAME}-${ENVIRONMENT}-sonarqube-instance-profile"
+          SECURITY_GROUP_NAME="${PROJECT_NAME}-${ENVIRONMENT}-sonarqube-sg"
+          INSTANCE_NAME="${PROJECT_NAME}-${ENVIRONMENT}-sonarqube"
+          SSM_POLICY_ARN="arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+
+          TF_VARS=(
+            -var-file="${TFVARS_FILE}"
+            -var="aws_region=${AWS_REGION}"
+            -var="project_name=${PROJECT_NAME}"
+            -var="environment=${ENVIRONMENT}"
+            -var="vpc_id=${VPC_ID}"
+            -var="sonarqube_subnet_id=${SUBNET_ID}"
+            -var="allowed_ssh_cidr=0.0.0.0/0"
+            -var="user_data_template_path=${USER_DATA_TEMPLATE_PATH}"
+          )
+
+          import_if_missing() {
+            local address="$1"
+            local id="$2"
+
+            if terraform state list | grep -Fx "${address}" >/dev/null; then
+              echo "Already managed: ${address}"
+              return 0
+            fi
+
+            if [[ -z "${id}" || "${id}" == "None" ]]; then
+              echo "No existing resource found for ${address}; Terraform will create it."
+              return 0
+            fi
+
+            terraform import "${TF_VARS[@]}" "${address}" "${id}"
+          }
+
+          ROLE_EXISTS="$(aws iam get-role \
+            --role-name "${ROLE_NAME}" \
+            --query 'Role.RoleName' \
+            --output text 2>/dev/null || true)"
+
+          SSM_ATTACHMENT_EXISTS=""
+          if [[ -n "${ROLE_EXISTS}" && "${ROLE_EXISTS}" != "None" ]]; then
+            SSM_ATTACHMENT_EXISTS="$(aws iam list-attached-role-policies \
+              --role-name "${ROLE_NAME}" \
+              --query "AttachedPolicies[?PolicyArn=='${SSM_POLICY_ARN}'].PolicyArn | [0]" \
+              --output text 2>/dev/null || true)"
+          fi
+
+          PROFILE_EXISTS="$(aws iam get-instance-profile \
+            --instance-profile-name "${PROFILE_NAME}" \
+            --query 'InstanceProfile.InstanceProfileName' \
+            --output text 2>/dev/null || true)"
+
+          SECURITY_GROUP_ID="$(aws ec2 describe-security-groups \
+            --region "${AWS_REGION}" \
+            --filters "Name=vpc-id,Values=${VPC_ID}" "Name=group-name,Values=${SECURITY_GROUP_NAME}" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text 2>/dev/null || true)"
+
+          INSTANCE_ID="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --filters "Name=tag:Name,Values=${INSTANCE_NAME}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query 'Reservations[].Instances[].InstanceId' \
+            --output text | awk '{print $1}')"
+
+          import_if_missing 'module.sonarqube_compute[0].aws_iam_role.this' "${ROLE_EXISTS}"
+          import_if_missing 'module.sonarqube_compute[0].aws_iam_instance_profile.this' "${PROFILE_EXISTS}"
+          if [[ -n "${SSM_ATTACHMENT_EXISTS}" && "${SSM_ATTACHMENT_EXISTS}" != "None" ]]; then
+            import_if_missing 'module.sonarqube_compute[0].aws_iam_role_policy_attachment.ssm' "${ROLE_NAME}/${SSM_POLICY_ARN}"
+          fi
+          import_if_missing 'module.security_groups.aws_security_group.sonarqube[0]' "${SECURITY_GROUP_ID}"
+          import_if_missing 'module.sonarqube_compute[0].aws_instance.this' "${INSTANCE_ID}"
+
       - name: Terraform plan
         working-directory: terraform/security-tools/deploy
         shell: bash
