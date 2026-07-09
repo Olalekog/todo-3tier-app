@@ -68,26 +68,6 @@ module "security_groups" {
   tags                        = local.common_tags
 }
 
-module "security_integration" {
-  source = "./security-tools/deploy"
-
-  project_name            = var.project_name
-  environment             = var.environment
-  aws_region              = var.aws_region
-  vpc_id                  = module.network.vpc_id
-  sonarqube_subnet_id     = module.network.public_subnet_ids[0]
-  ami_id                  = data.aws_ami.ubuntu.id
-  allowed_ssh_cidr        = var.allowed_ssh_cidr
-  key_name                = var.key_name
-  enable_sonarqube        = var.enable_sonarqube
-  sonarqube_instance_type = var.sonarqube_instance_type
-  sonarqube_version       = var.sonarqube_version
-  prometheus_image        = var.prometheus_image
-  grafana_image           = var.grafana_image
-  user_data_template_path = "${path.module}/templates/user_data_sonarqube.sh.tftpl"
-  tags                    = local.common_tags
-}
-
 module "database" {
   source = "./modules/database"
 

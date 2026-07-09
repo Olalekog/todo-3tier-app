@@ -19,7 +19,7 @@ variable "vpc_id" {
 }
 
 variable "sonarqube_subnet_id" {
-  description = "Public subnet ID where SonarQube will run in the same VPC as the app infrastructure."
+  description = "Public subnet ID where the security tools EC2 instance will run."
   type        = string
 }
 
@@ -53,9 +53,27 @@ variable "sonarqube_instance_type" {
 }
 
 variable "sonarqube_version" {
-  description = "SonarQube Community Edition version to install."
+  description = "Legacy SonarQube version value. Prefer sonarqube_image for the container deployment."
   type        = string
   default     = "10.4.1.88267"
+}
+
+variable "sonarqube_image" {
+  description = "SonarQube container image to run on the security tools EC2 instance."
+  type        = string
+  default     = "sonarqube:community"
+}
+
+variable "trivy_image" {
+  description = "Trivy container image to run on the security tools EC2 instance."
+  type        = string
+  default     = "aquasec/trivy:latest"
+}
+
+variable "checkov_image" {
+  description = "Checkov container image to run on the security tools EC2 instance."
+  type        = string
+  default     = "bridgecrew/checkov:latest"
 }
 
 variable "prometheus_image" {

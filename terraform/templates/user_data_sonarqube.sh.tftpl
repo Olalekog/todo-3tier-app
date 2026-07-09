@@ -1,91 +1,156 @@
 #!/bin/bash
 set -euo pipefail
 
-exec > >(tee /var/log/user-data-sonarqube.log | logger -t user-data-sonarqube -s 2>/dev/console) 2>&1
+exec > >(tee /var/log/user-data-security-tools.log | logger -t user-data-security-tools -s 2>/dev/console) 2>&1
 
-SONARQUBE_VERSION="${sonarqube_version}"
+SONARQUBE_IMAGE="${sonarqube_image}"
+TRIVY_IMAGE="${trivy_image}"
+CHECKOV_IMAGE="${checkov_image}"
 PROMETHEUS_IMAGE="${prometheus_image}"
 GRAFANA_IMAGE="${grafana_image}"
-SONAR_HOME="/opt/sonarqube"
-MONITORING_HOME="/opt/monitoring"
+TOOLS_HOME="/opt/security-tools"
 
-echo "Installing SonarQube $${SONARQUBE_VERSION}..."
+echo "Starting security tools container bootstrap..."
+echo "SONARQUBE_IMAGE=$${SONARQUBE_IMAGE}"
+echo "TRIVY_IMAGE=$${TRIVY_IMAGE}"
+echo "CHECKOV_IMAGE=$${CHECKOV_IMAGE}"
 
-apt-get update -y
-apt-get install -y docker.io openjdk-17-jre unzip wget
+retry() {
+  local attempts="$1"
+  shift
+  local delay=10
 
-# Elasticsearch kernel requirements
+  for attempt in $(seq 1 "$${attempts}"); do
+    if "$@"; then
+      return 0
+    fi
+
+    echo "Command failed on attempt $${attempt}/$${attempts}: $*"
+    sleep "$${delay}"
+  done
+
+  return 1
+}
+
+export DEBIAN_FRONTEND=noninteractive
+retry 6 apt-get update -y
+retry 6 apt-get install -y ca-certificates curl jq snapd
+
+if command -v snap >/dev/null 2>&1; then
+  snap list amazon-ssm-agent >/dev/null 2>&1 || snap install amazon-ssm-agent --classic || true
+  systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service >/dev/null 2>&1 || snap start amazon-ssm-agent || true
+fi
+
+ensure_docker() {
+  if command -v docker >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Installing Docker from Ubuntu package repositories."
+  retry 6 apt-get install -y docker.io || true
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker package is still unavailable; trying Docker's official install script."
+    curl -fsSL https://get.docker.com -o /tmp/get-docker.sh && sh /tmp/get-docker.sh || true
+  fi
+
+  if ! command -v docker >/dev/null 2>&1 && command -v snap >/dev/null 2>&1; then
+    echo "Docker package is still unavailable; trying snap docker as a fallback."
+    snap install docker || true
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "ERROR: Docker is not installed."
+    return 1
+  fi
+
+  systemctl enable --now docker >/dev/null 2>&1 || service docker start || snap start docker || true
+
+  if ! docker version >/dev/null 2>&1; then
+    echo "ERROR: Docker command exists, but the daemon is not responding."
+    systemctl status docker --no-pager || true
+    snap services docker || true
+    return 1
+  fi
+
+  docker version
+}
+
+ensure_docker
+
+# SonarQube container requirements.
 sysctl -w vm.max_map_count=524288
 sysctl -w fs.file-max=131072
-echo "vm.max_map_count=524288" >> /etc/sysctl.conf
-echo "fs.file-max=131072" >> /etc/sysctl.conf
-
-# Dedicated system user
-useradd -r -m -s /bin/false sonarqube || true
-
-# Download and install SonarQube
-SONAR_ZIP="sonarqube-$${SONARQUBE_VERSION}.zip"
-wget -q "https://binaries.sonarsource.com/Distribution/sonarqube/$${SONAR_ZIP}" -O /tmp/$${SONAR_ZIP}
-unzip -q /tmp/$${SONAR_ZIP} -d /opt
-mv /opt/sonarqube-$${SONARQUBE_VERSION} $${SONAR_HOME}
-chown -R sonarqube:sonarqube $${SONAR_HOME}
-
-echo "Configuring Prometheus and Grafana containers..."
-
-systemctl enable docker
-systemctl start docker
+grep -q '^vm.max_map_count=' /etc/sysctl.conf || echo "vm.max_map_count=524288" >> /etc/sysctl.conf
+grep -q '^fs.file-max=' /etc/sysctl.conf || echo "fs.file-max=131072" >> /etc/sysctl.conf
 
 mkdir -p \
-  $${MONITORING_HOME}/prometheus/data \
-  $${MONITORING_HOME}/grafana/data
+  "$${TOOLS_HOME}/sonarqube/data" \
+  "$${TOOLS_HOME}/sonarqube/extensions" \
+  "$${TOOLS_HOME}/sonarqube/logs" \
+  "$${TOOLS_HOME}/trivy/cache" \
+  "$${TOOLS_HOME}/checkov/workspace" \
+  "$${TOOLS_HOME}/prometheus/data" \
+  "$${TOOLS_HOME}/grafana/data"
 
-chown -R 472:472 $${MONITORING_HOME}/grafana
-chown -R 65534:65534 $${MONITORING_HOME}/prometheus/data
+chown -R 1000:0 "$${TOOLS_HOME}/sonarqube"
+chown -R 472:472 "$${TOOLS_HOME}/grafana"
+chown -R 65534:65534 "$${TOOLS_HOME}/prometheus/data"
 
-docker network create monitoring || true
-docker rm -f prometheus grafana 2>/dev/null || true
+docker network create security-tools >/dev/null 2>&1 || true
 
-docker pull $${PROMETHEUS_IMAGE}
-docker pull $${GRAFANA_IMAGE}
+for IMAGE in "$${SONARQUBE_IMAGE}" "$${TRIVY_IMAGE}" "$${CHECKOV_IMAGE}" "$${PROMETHEUS_IMAGE}" "$${GRAFANA_IMAGE}"; do
+  echo "Pulling $${IMAGE}"
+  retry 5 docker pull "$${IMAGE}"
+done
+
+docker rm -f sonarqube trivy checkov prometheus grafana >/dev/null 2>&1 || true
+
+docker run -d \
+  --name sonarqube \
+  --restart unless-stopped \
+  --network security-tools \
+  -p 9000:9000 \
+  --ulimit nofile=131072:131072 \
+  --ulimit nproc=8192:8192 \
+  -v "$${TOOLS_HOME}/sonarqube/data:/opt/sonarqube/data" \
+  -v "$${TOOLS_HOME}/sonarqube/extensions:/opt/sonarqube/extensions" \
+  -v "$${TOOLS_HOME}/sonarqube/logs:/opt/sonarqube/logs" \
+  "$${SONARQUBE_IMAGE}"
+
+docker run -d \
+  --name trivy \
+  --restart unless-stopped \
+  --network security-tools \
+  -p 4954:4954 \
+  -v "$${TOOLS_HOME}/trivy/cache:/root/.cache/trivy" \
+  "$${TRIVY_IMAGE}" \
+  server --listen 0.0.0.0:4954
+
+docker run -d \
+  --name checkov \
+  --restart unless-stopped \
+  --network security-tools \
+  -v "$${TOOLS_HOME}/checkov/workspace:/workspace" \
+  --entrypoint sh \
+  "$${CHECKOV_IMAGE}" \
+  -c 'checkov --version && tail -f /dev/null'
 
 docker run -d \
   --name prometheus \
   --restart unless-stopped \
-  --network monitoring \
+  --network security-tools \
   -p 9090:9090 \
-  -v $${MONITORING_HOME}/prometheus/data:/prometheus \
-  $${PROMETHEUS_IMAGE}
+  -v "$${TOOLS_HOME}/prometheus/data:/prometheus" \
+  "$${PROMETHEUS_IMAGE}"
 
 docker run -d \
   --name grafana \
   --restart unless-stopped \
-  --network monitoring \
+  --network security-tools \
   -p 3000:3000 \
-  -v $${MONITORING_HOME}/grafana/data:/var/lib/grafana \
-  $${GRAFANA_IMAGE}
-
-# Systemd unit
-cat > /etc/systemd/system/sonarqube.service <<'UNIT'
-[Unit]
-Description=SonarQube
-After=network.target
-
-[Service]
-Type=forking
-User=sonarqube
-ExecStart=/opt/sonarqube/bin/linux-x86-64/sonar.sh start
-ExecStop=/opt/sonarqube/bin/linux-x86-64/sonar.sh stop
-Restart=on-failure
-LimitNOFILE=131072
-LimitNPROC=8192
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-systemctl daemon-reload
-systemctl enable sonarqube
-systemctl start sonarqube
+  -v "$${TOOLS_HOME}/grafana/data:/var/lib/grafana" \
+  "$${GRAFANA_IMAGE}"
 
 TOKEN="$(curl -fsX PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600' || true)"
 if [ -n "$${TOKEN}" ]; then
@@ -94,7 +159,9 @@ else
   PUBLIC_IP="unknown"
 fi
 
-echo "SonarQube started. Access at http://$${PUBLIC_IP}:9000"
-echo "Prometheus started. Access at http://$${PUBLIC_IP}:9090"
-echo "Grafana started. Access at http://$${PUBLIC_IP}:3000"
-echo "Default credentials: admin / admin - change on first login."
+echo "Security tools containers started:"
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+echo "SonarQube: http://$${PUBLIC_IP}:9000"
+echo "Trivy server: http://$${PUBLIC_IP}:4954"
+echo "Prometheus: http://$${PUBLIC_IP}:9090"
+echo "Grafana: http://$${PUBLIC_IP}:3000"

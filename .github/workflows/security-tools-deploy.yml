@@ -1,0 +1,690 @@
+name: Security Tools Infrastructure Deploy
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - "terraform/security-tools/deploy/**"
+      - "terraform/security-tools/sonarqube/**"
+      - "terraform/security-tools/trivy/**"
+      - "terraform/security-tools/checkov/**"
+      - "terraform/security-tools/grafana/**"
+      - "terraform/security-tools/prometheus/**"
+      - "terraform/templates/user_data_sonarqube.sh.tftpl"
+      - ".github/workflows/security-tools-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Terraform action
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+        default: apply
+      target_environment:
+        description: Promotion target
+        required: true
+        type: choice
+        options:
+          - dev
+          - uat
+          - prod
+        default: dev
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terraform-security-tools-${{ github.event.inputs.target_environment || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+  BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION || '1.9.0' }}
+  TFVARS_FILE: scurity-tools.tfvars
+  USER_DATA_TEMPLATE_PATH: ../../templates/user_data_sonarqube.sh.tftpl
+
+jobs:
+  resolve_promotion:
+    name: Resolve Promotion
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.resolve.outputs.action }}
+      target_environment: ${{ steps.resolve.outputs.target_environment }}
+      state_key: ${{ steps.resolve.outputs.state_key }}
+    steps:
+      - name: Validate promotion path
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_BRANCH="${GITHUB_REF_NAME}"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ACTION="${{ github.event.inputs.action }}"
+            TARGET_ENVIRONMENT="${{ github.event.inputs.target_environment }}"
+          else
+            ACTION="apply"
+            TARGET_ENVIRONMENT="${SOURCE_BRANCH}"
+          fi
+
+          case "${TARGET_ENVIRONMENT}" in
+            dev)
+              if [[ "${SOURCE_BRANCH}" != "dev" ]]; then
+                echo "Dev deployments must run from the dev branch."
+                exit 1
+              fi
+              ;;
+            uat)
+              if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+                if [[ "${SOURCE_BRANCH}" != "dev" ]]; then
+                  echo "Manual UAT promotions must be dispatched from the dev branch."
+                  exit 1
+                fi
+              else
+                if [[ "${SOURCE_BRANCH}" != "uat" ]]; then
+                  echo "UAT push deployments must run from the uat branch."
+                  exit 1
+                fi
+              fi
+              ;;
+            prod)
+              if [[ "${{ github.event_name }}" != "workflow_dispatch" || "${SOURCE_BRANCH}" != "uat" ]]; then
+                echo "Prod deployments must be manually dispatched from the uat branch."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported target environment: ${TARGET_ENVIRONMENT}"
+              exit 1
+              ;;
+          esac
+
+          echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
+          echo "target_environment=${TARGET_ENVIRONMENT}" >> "$GITHUB_OUTPUT"
+          echo "state_key=${PROJECT_NAME}/${TARGET_ENVIRONMENT}/security-tools/sucurity.state" >> "$GITHUB_OUTPUT"
+
+  detect_changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_promotion
+    outputs:
+      terraform: ${{ steps.filters.outputs.terraform }}
+      sonarqube: ${{ steps.filters.outputs.sonarqube }}
+      trivy: ${{ steps.filters.outputs.trivy }}
+      checkov: ${{ steps.filters.outputs.checkov }}
+      grafana: ${{ steps.filters.outputs.grafana }}
+      prometheus: ${{ steps.filters.outputs.prometheus }}
+      run_all: ${{ steps.scope.outputs.run_all }}
+      any_tool: ${{ steps.scope.outputs.any_tool }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        id: filters
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            terraform:
+              - "terraform/security-tools/deploy/**"
+              - "terraform/templates/user_data_sonarqube.sh.tftpl"
+            sonarqube:
+              - "terraform/security-tools/sonarqube/**"
+            trivy:
+              - "terraform/security-tools/trivy/**"
+            checkov:
+              - "terraform/security-tools/checkov/**"
+            grafana:
+              - "terraform/security-tools/grafana/**"
+            prometheus:
+              - "terraform/security-tools/prometheus/**"
+
+      - name: Resolve workflow scope
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RUN_ALL=false
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.terraform }}" == "true" ]]; then
+            RUN_ALL=true
+          fi
+
+          ANY_TOOL=false
+          if [[ "${RUN_ALL}" == "true" || "${{ steps.filters.outputs.sonarqube }}" == "true" || "${{ steps.filters.outputs.trivy }}" == "true" || "${{ steps.filters.outputs.checkov }}" == "true" || "${{ steps.filters.outputs.grafana }}" == "true" || "${{ steps.filters.outputs.prometheus }}" == "true" ]]; then
+            ANY_TOOL=true
+          fi
+
+          echo "run_all=${RUN_ALL}" >> "$GITHUB_OUTPUT"
+          echo "any_tool=${ANY_TOOL}" >> "$GITHUB_OUTPUT"
+
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_promotion
+      - detect_changes
+    if: needs.detect_changes.outputs.run_all == 'true'
+    env:
+      ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
+      STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSecurityToolsPlan
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform/security-tools/deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform validate
+        working-directory: terraform/security-tools/deploy
+        shell: bash
+        run: terraform validate
+
+      - name: Discover shared network
+        id: network
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VPC_ID="$(aws ec2 describe-vpcs \
+            --region "${AWS_REGION}" \
+            --filters "Name=tag:Name,Values=${PROJECT_NAME}-${ENVIRONMENT}-vpc" "Name=state,Values=available" \
+            --query 'Vpcs[0].VpcId' \
+            --output text)"
+
+          SUBNET_ID="$(aws ec2 describe-subnets \
+            --region "${AWS_REGION}" \
+            --filters "Name=vpc-id,Values=${VPC_ID}" "Name=tag:Name,Values=${PROJECT_NAME}-${ENVIRONMENT}-public-1" \
+            --query 'Subnets[0].SubnetId' \
+            --output text)"
+
+          if [[ -z "${VPC_ID}" || "${VPC_ID}" == "None" || -z "${SUBNET_ID}" || "${SUBNET_ID}" == "None" ]]; then
+            echo "Could not find the shared VPC and public subnet for ${PROJECT_NAME}-${ENVIRONMENT}."
+            exit 1
+          fi
+
+          echo "vpc_id=${VPC_ID}" >> "$GITHUB_OUTPUT"
+          echo "subnet_id=${SUBNET_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform plan
+        working-directory: terraform/security-tools/deploy
+        shell: bash
+        env:
+          VPC_ID: ${{ steps.network.outputs.vpc_id }}
+          SUBNET_ID: ${{ steps.network.outputs.subnet_id }}
+        run: |
+          set -euo pipefail
+
+          terraform plan \
+            -var-file="${TFVARS_FILE}" \
+            -var="aws_region=${AWS_REGION}" \
+            -var="project_name=${PROJECT_NAME}" \
+            -var="environment=${ENVIRONMENT}" \
+            -var="vpc_id=${VPC_ID}" \
+            -var="sonarqube_subnet_id=${SUBNET_ID}" \
+            -var="allowed_ssh_cidr=0.0.0.0/0" \
+            -var="user_data_template_path=${USER_DATA_TEMPLATE_PATH}" \
+            -out=security-tools.tfplan
+
+      - name: Upload Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-tools-plan
+          path: terraform/security-tools/deploy/security-tools.tfplan
+          if-no-files-found: error
+
+  prod_approval:
+    name: Prod Approval
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_promotion
+      - detect_changes
+      - plan
+    if: needs.detect_changes.outputs.run_all == 'true' && needs.resolve_promotion.outputs.action == 'apply' && needs.resolve_promotion.outputs.target_environment == 'prod'
+    environment: prod
+    steps:
+      - name: Approval received
+        shell: bash
+        run: echo "Approved prod security-tools deployment."
+
+  apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_promotion
+      - detect_changes
+      - plan
+      - prod_approval
+    if: always() && needs.detect_changes.outputs.run_all == 'true' && needs.resolve_promotion.outputs.action == 'apply' && needs.plan.result == 'success' && (needs.resolve_promotion.outputs.target_environment != 'prod' || needs.prod_approval.result == 'success')
+    env:
+      ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
+      STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSecurityToolsApply
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform/security-tools/deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Download Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: security-tools-plan
+          path: terraform/security-tools/deploy
+
+      - name: Terraform apply
+        working-directory: terraform/security-tools/deploy
+        shell: bash
+        run: terraform apply -auto-approve security-tools.tfplan
+
+  resolve_outputs:
+    name: Resolve Security Tools Outputs
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_promotion
+      - detect_changes
+      - apply
+    if: always() && needs.detect_changes.outputs.any_tool == 'true' && needs.resolve_promotion.outputs.action == 'apply' && (needs.apply.result == 'success' || needs.apply.result == 'skipped')
+    env:
+      ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
+      STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
+    outputs:
+      sonarqube_url: ${{ steps.outputs.outputs.sonarqube_url }}
+      trivy_server_url: ${{ steps.outputs.outputs.trivy_server_url }}
+      prometheus_url: ${{ steps.outputs.outputs.prometheus_url }}
+      grafana_url: ${{ steps.outputs.outputs.grafana_url }}
+      instance_id: ${{ steps.instance.outputs.instance_id }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSecurityToolsOutputs
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform/security-tools/deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Read Terraform outputs
+        id: outputs
+        working-directory: terraform/security-tools/deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "sonarqube_url=$(terraform output -raw sonarqube_url)" >> "$GITHUB_OUTPUT"
+          echo "trivy_server_url=$(terraform output -raw trivy_server_url)" >> "$GITHUB_OUTPUT"
+          echo "prometheus_url=$(terraform output -raw prometheus_url)" >> "$GITHUB_OUTPUT"
+          echo "grafana_url=$(terraform output -raw grafana_url)" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve EC2 instance
+        id: instance
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INSTANCE_ID="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --filters "Name=tag:Name,Values=${PROJECT_NAME}-${ENVIRONMENT}-sonarqube" "Name=instance-state-name,Values=pending,running" \
+            --query 'Reservations[].Instances[].InstanceId' \
+            --output text | awk '{print $1}')"
+
+          if [[ -z "${INSTANCE_ID}" || "${INSTANCE_ID}" == "None" ]]; then
+            echo "No running security tools instance found."
+            exit 1
+          fi
+
+          echo "instance_id=${INSTANCE_ID}" >> "$GITHUB_OUTPUT"
+
+  sonarqube:
+    name: SonarQube
+    runs-on: ubuntu-latest
+    needs:
+      - detect_changes
+      - resolve_outputs
+    if: needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.sonarqube == 'true')
+    steps:
+      - name: Verify SonarQube endpoint
+        env:
+          SONARQUBE_URL: ${{ needs.resolve_outputs.outputs.sonarqube_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "SonarQube URL: ${SONARQUBE_URL}"
+          for i in {1..60}; do
+            if curl -fsS --max-time 10 "${SONARQUBE_URL}" >/dev/null; then
+              exit 0
+            fi
+            sleep 15
+          done
+
+          echo "SonarQube did not become reachable in time."
+          exit 1
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsSonarQubeVerify
+
+      - name: Verify SonarQube container
+        env:
+          INSTANCE_ID: ${{ needs.resolve_outputs.outputs.instance_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          COMMAND_ID="$(aws ssm send-command \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Verify SonarQube container" \
+            --parameters 'commands=["docker inspect -f '\''{{.State.Running}}'\'' sonarqube"]' \
+            --query 'Command.CommandId' \
+            --output text)"
+
+          sleep 15
+
+          COMMAND_STATUS="$(aws ssm get-command-invocation \
+            --region "${AWS_REGION}" \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${INSTANCE_ID}" \
+            --query Status \
+            --output text)"
+
+          test "${COMMAND_STATUS}" = "Success"
+
+  trivy:
+    name: Trivy
+    runs-on: ubuntu-latest
+    needs:
+      - detect_changes
+      - resolve_outputs
+    if: needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.trivy == 'true')
+    steps:
+      - name: Verify Trivy endpoint
+        env:
+          TRIVY_SERVER_URL: ${{ needs.resolve_outputs.outputs.trivy_server_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Trivy server URL: ${TRIVY_SERVER_URL}"
+          for i in {1..30}; do
+            if curl -fsS --max-time 10 "${TRIVY_SERVER_URL%/}/healthz" >/dev/null; then
+              exit 0
+            fi
+            sleep 15
+          done
+
+          echo "Trivy server did not become reachable in time."
+          exit 1
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsTrivyVerify
+
+      - name: Verify Trivy container
+        env:
+          INSTANCE_ID: ${{ needs.resolve_outputs.outputs.instance_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          COMMAND_ID="$(aws ssm send-command \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Verify Trivy container" \
+            --parameters 'commands=["docker inspect -f '\''{{.State.Running}}'\'' trivy","docker exec trivy trivy --version"]' \
+            --query 'Command.CommandId' \
+            --output text)"
+
+          sleep 15
+
+          COMMAND_STATUS="$(aws ssm get-command-invocation \
+            --region "${AWS_REGION}" \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${INSTANCE_ID}" \
+            --query Status \
+            --output text)"
+
+          test "${COMMAND_STATUS}" = "Success"
+
+  checkov:
+    name: Checkov
+    runs-on: ubuntu-latest
+    needs:
+      - detect_changes
+      - resolve_outputs
+    if: needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.checkov == 'true')
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsCheckovVerify
+
+      - name: Verify Checkov container
+        env:
+          INSTANCE_ID: ${{ needs.resolve_outputs.outputs.instance_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          COMMAND_ID="$(aws ssm send-command \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Verify Checkov container" \
+            --parameters 'commands=["docker inspect -f '\''{{.State.Running}}'\'' checkov","docker exec checkov checkov --version"]' \
+            --query 'Command.CommandId' \
+            --output text)"
+
+          sleep 15
+
+          COMMAND_STATUS="$(aws ssm get-command-invocation \
+            --region "${AWS_REGION}" \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${INSTANCE_ID}" \
+            --query Status \
+            --output text)"
+
+          test "${COMMAND_STATUS}" = "Success"
+
+  grafana:
+    name: Grafana
+    runs-on: ubuntu-latest
+    needs:
+      - detect_changes
+      - resolve_outputs
+    if: needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.grafana == 'true')
+    steps:
+      - name: Verify Grafana endpoint
+        env:
+          GRAFANA_URL: ${{ needs.resolve_outputs.outputs.grafana_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Grafana URL: ${GRAFANA_URL}"
+          for i in {1..30}; do
+            if curl -fsS --max-time 10 "${GRAFANA_URL%/}/api/health" >/dev/null; then
+              exit 0
+            fi
+            sleep 15
+          done
+
+          echo "Grafana did not become reachable in time."
+          exit 1
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsGrafanaVerify
+
+      - name: Verify Grafana container
+        env:
+          INSTANCE_ID: ${{ needs.resolve_outputs.outputs.instance_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          COMMAND_ID="$(aws ssm send-command \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Verify Grafana container" \
+            --parameters 'commands=["docker inspect -f '\''{{.State.Running}}'\'' grafana"]' \
+            --query 'Command.CommandId' \
+            --output text)"
+
+          sleep 15
+
+          COMMAND_STATUS="$(aws ssm get-command-invocation \
+            --region "${AWS_REGION}" \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${INSTANCE_ID}" \
+            --query Status \
+            --output text)"
+
+          test "${COMMAND_STATUS}" = "Success"
+
+  prometheus:
+    name: Prometheus
+    runs-on: ubuntu-latest
+    needs:
+      - detect_changes
+      - resolve_outputs
+    if: needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.prometheus == 'true')
+    steps:
+      - name: Verify Prometheus endpoint
+        env:
+          PROMETHEUS_URL: ${{ needs.resolve_outputs.outputs.prometheus_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Prometheus URL: ${PROMETHEUS_URL}"
+          for i in {1..30}; do
+            if curl -fsS --max-time 10 "${PROMETHEUS_URL%/}/-/ready" >/dev/null; then
+              exit 0
+            fi
+            sleep 15
+          done
+
+          echo "Prometheus did not become reachable in time."
+          exit 1
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsPrometheusVerify
+
+      - name: Verify Prometheus container
+        env:
+          INSTANCE_ID: ${{ needs.resolve_outputs.outputs.instance_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          COMMAND_ID="$(aws ssm send-command \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Verify Prometheus container" \
+            --parameters 'commands=["docker inspect -f '\''{{.State.Running}}'\'' prometheus"]' \
+            --query 'Command.CommandId' \
+            --output text)"
+
+          sleep 15
+
+          COMMAND_STATUS="$(aws ssm get-command-invocation \
+            --region "${AWS_REGION}" \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${INSTANCE_ID}" \
+            --query Status \
+            --output text)"
+
+          test "${COMMAND_STATUS}" = "Success"

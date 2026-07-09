@@ -44,7 +44,7 @@ locals {
 check "sonarqube_subnet_in_vpc" {
   assert {
     condition     = !var.enable_sonarqube || try(data.aws_subnet.sonarqube[0].vpc_id, "") == var.vpc_id
-    error_message = "SonarQube subnet must belong to the same VPC as the app infrastructure."
+    error_message = "Security tools subnet must belong to the configured VPC."
   }
 }
 
@@ -97,9 +97,11 @@ module "sonarqube_compute" {
   backend_private_ip      = ""
 
   user_data_template_vars = {
-    sonarqube_version = var.sonarqube_version
-    prometheus_image  = var.prometheus_image
-    grafana_image     = var.grafana_image
+    sonarqube_image  = var.sonarqube_image
+    trivy_image      = var.trivy_image
+    checkov_image    = var.checkov_image
+    prometheus_image = var.prometheus_image
+    grafana_image    = var.grafana_image
   }
 
   tags = merge(var.tags, {

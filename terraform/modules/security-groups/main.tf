@@ -136,6 +136,14 @@ resource "aws_security_group" "sonarqube" {
   }
 
   ingress {
+    description = "Trivy server API from allowed CIDR"
+    from_port   = 4954
+    to_port     = 4954
+    protocol    = "tcp"
+    cidr_blocks = [local.sonarqube_allowed_cidr]
+  }
+
+  ingress {
     description = "SSH from allowed CIDR"
     from_port   = 22
     to_port     = 22

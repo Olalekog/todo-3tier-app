@@ -124,33 +124,3 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
-
-variable "enable_sonarqube" {
-  description = "Deploy a dedicated SonarQube EC2 instance for source code scanning."
-  type        = bool
-  default     = false
-}
-
-variable "sonarqube_instance_type" {
-  description = "EC2 instance type for the SonarQube server. Minimum t3.medium recommended."
-  type        = string
-  default     = "t3.medium"
-}
-
-variable "sonarqube_version" {
-  description = "SonarQube Community Edition version to install."
-  type        = string
-  default     = "10.4.1.88267"
-}
-
-variable "prometheus_image" {
-  description = "Prometheus container image to run on the SonarQube EC2 instance."
-  type        = string
-  default     = "prom/prometheus:latest"
-}
-
-variable "grafana_image" {
-  description = "Grafana container image to run on the SonarQube EC2 instance."
-  type        = string
-  default     = "grafana/grafana-oss:latest"
-}

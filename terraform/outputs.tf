@@ -17,18 +17,3 @@ output "frontend_url" {
   description = "Frontend URL."
   value       = "http://${module.frontend_compute.public_ip}"
 }
-
-output "sonarqube_url" {
-  description = "SonarQube URL (only set when enable_sonarqube = true)."
-  value       = module.security_integration.sonarqube_url
-}
-
-output "prometheus_url" {
-  description = "Prometheus URL (only set when enable_sonarqube = true)."
-  value       = module.security_integration.prometheus_url
-}
-
-output "grafana_url" {
-  description = "Grafana URL (only set when enable_sonarqube = true)."
-  value       = module.security_integration.grafana_url
-}
