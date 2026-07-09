@@ -211,6 +211,18 @@ jobs:
         shell: bash
         run: terraform validate
 
+      - name: Verify tfvars file
+        working-directory: terraform/security-tools/deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f "${TFVARS_FILE}" ]]; then
+            echo "Missing ${TFVARS_FILE} in terraform/security-tools/deploy."
+            ls -la
+            exit 1
+          fi
+
       - name: Discover shared network
         id: network
         shell: bash
@@ -383,10 +395,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "sonarqube_url=$(terraform output -raw sonarqube_url)" >> "$GITHUB_OUTPUT"
-          echo "trivy_server_url=$(terraform output -raw trivy_server_url)" >> "$GITHUB_OUTPUT"
-          echo "prometheus_url=$(terraform output -raw prometheus_url)" >> "$GITHUB_OUTPUT"
-          echo "grafana_url=$(terraform output -raw grafana_url)" >> "$GITHUB_OUTPUT"
+          terraform output -json > terraform-outputs.json
+
+          if [[ "$(jq 'length' terraform-outputs.json)" == "0" ]]; then
+            echo "No Terraform outputs found in state ${STATE_KEY}."
+            echo "Run an apply for ${ENVIRONMENT} before running component-only verification."
+            exit 1
+          fi
+
+          for OUTPUT_NAME in sonarqube_url trivy_server_url prometheus_url grafana_url; do
+            OUTPUT_VALUE="$(jq -r --arg name "${OUTPUT_NAME}" '.[$name].value // empty' terraform-outputs.json)"
+            if [[ -z "${OUTPUT_VALUE}" || "${OUTPUT_VALUE}" == "null" ]]; then
+              echo "Missing required Terraform output: ${OUTPUT_NAME}"
+              exit 1
+            fi
+
+            echo "${OUTPUT_NAME}=${OUTPUT_VALUE}" >> "$GITHUB_OUTPUT"
+          done
 
       - name: Resolve EC2 instance
         id: instance
