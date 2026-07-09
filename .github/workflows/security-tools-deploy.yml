@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev
+      - uat
     paths:
       - "terraform/security-tools/deploy/**"
       - "terraform/security-tools/sonarqube/**"
@@ -137,6 +138,7 @@ jobs:
             terraform:
               - "terraform/security-tools/deploy/**"
               - "terraform/templates/user_data_sonarqube.sh.tftpl"
+              - ".github/workflows/security-tools-deploy.yml"
             sonarqube:
               - "terraform/security-tools/sonarqube/**"
             trivy:
@@ -519,7 +521,7 @@ jobs:
     needs:
       - detect_changes
       - resolve_outputs
-    if: needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.sonarqube == 'true')
+    if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.sonarqube == 'true')
     steps:
       - name: Verify SonarQube endpoint
         env:
@@ -579,7 +581,7 @@ jobs:
     needs:
       - detect_changes
       - resolve_outputs
-    if: needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.trivy == 'true')
+    if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.trivy == 'true')
     steps:
       - name: Verify Trivy endpoint
         env:
@@ -639,7 +641,7 @@ jobs:
     needs:
       - detect_changes
       - resolve_outputs
-    if: needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.checkov == 'true')
+    if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.checkov == 'true')
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -681,7 +683,7 @@ jobs:
     needs:
       - detect_changes
       - resolve_outputs
-    if: needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.grafana == 'true')
+    if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.grafana == 'true')
     steps:
       - name: Verify Grafana endpoint
         env:
@@ -741,7 +743,7 @@ jobs:
     needs:
       - detect_changes
       - resolve_outputs
-    if: needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.prometheus == 'true')
+    if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.prometheus == 'true')
     steps:
       - name: Verify Prometheus endpoint
         env:
