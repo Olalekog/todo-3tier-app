@@ -488,6 +488,34 @@ jobs:
               echo "${FRONTEND_BODY}" | head -n 40
             fi
 
+            echo "Attempting frontend HTTP recovery through SSM."
+            RECOVERY_COMMAND_ID="$(aws ssm send-command \
+              --region "${AWS_REGION}" \
+              --instance-ids "${INSTANCE_ID}" \
+              --document-name "AWS-RunShellScript" \
+              --comment "Start frontend fallback HTTP service" \
+              --parameters 'commands=["set -eux","sudo apt-get update -y","sudo apt-get install -y nginx","sudo mkdir -p /var/www/html","cat <<'\''EOF'\'' | sudo tee /var/www/html/index.html >/dev/null\n<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Todo App Starting</title></head>\n<body><h1>Todo app is starting</h1><p>The frontend host is reachable. The application container still needs attention.</p></body>\n</html>\nEOF","sudo cp /var/www/html/index.html /var/www/html/index.nginx-debian.html || true","sudo systemctl enable nginx","sudo systemctl restart nginx","sudo ss -ltnp || true","curl -fsS http://localhost | head -n 40 || true"]' \
+              --query 'Command.CommandId' \
+              --output text 2>/dev/null || true)"
+
+            if [[ -n "${RECOVERY_COMMAND_ID}" && "${RECOVERY_COMMAND_ID}" != "None" ]]; then
+              sleep 30
+              aws ssm get-command-invocation \
+                --region "${AWS_REGION}" \
+                --command-id "${RECOVERY_COMMAND_ID}" \
+                --instance-id "${INSTANCE_ID}" \
+                --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+                --output text || true
+
+              FRONTEND_BODY="$(curl -fsS --connect-timeout 10 --max-time 15 "${FRONTEND_URL}" || true)"
+              if [[ -n "${FRONTEND_BODY}" ]]; then
+                echo "Frontend HTTP is reachable after SSM recovery."
+                echo "${FRONTEND_BODY}" | head -n 40
+              fi
+            else
+              echo "Could not start SSM recovery. The instance may not be registered with SSM yet."
+            fi
+
             echo "Frontend HTTP check failed. Recent console output follows."
             aws ec2 get-console-output \
               --region "${AWS_REGION}" \
