@@ -144,7 +144,7 @@ jobs:
               BUILD_BACKEND="false"
               WORKLOAD="frontend"
             elif [[ "${REQUESTED_WORKLOAD}" == "backend" ]]; then
-              BUILD_FRONTEND="false"
+              BUILD_FRONTEND="true"
               BUILD_BACKEND="true"
               WORKLOAD="backend"
             elif [[ "${REQUESTED_WORKLOAD}" == "infra" ]]; then
@@ -182,8 +182,20 @@ jobs:
               BUILD_BACKEND="true"
             fi
 
+            # A backend deployment also refreshes the frontend instance so it
+            # can proxy to the current backend private IP. Build/push the
+            # frontend image with the same immutable tag instead of falling
+            # back to a possibly stale or missing latest tag.
+            if [[ "${BUILD_BACKEND}" == "true" ]]; then
+              BUILD_FRONTEND="true"
+            fi
+
             if [[ "${BUILD_FRONTEND}" == "true" && "${BUILD_BACKEND}" == "true" ]]; then
-              WORKLOAD="app"
+              if echo "${CHANGED_FILES}" | grep -Eq '^frontend/'; then
+                WORKLOAD="app"
+              else
+                WORKLOAD="backend"
+              fi
             elif [[ "${BUILD_FRONTEND}" == "true" ]]; then
               WORKLOAD="frontend"
             elif [[ "${BUILD_BACKEND}" == "true" ]]; then
@@ -453,25 +465,31 @@ jobs:
             aws ecr create-repository --region "${AWS_REGION}" --repository-name "${PROJECT_NAME}/${ENVIRONMENT}/todo-backend" --image-scanning-configuration scanOnPush=true
           fi
 
-      - name: Push frontend image with SHA tag
+      - name: Push frontend image with SHA and latest tags
         if: needs.resolve.outputs.build_frontend == 'true'
         shell: bash
         run: |
           set -euo pipefail
           REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
           IMAGE_SHA="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO}:${IMAGE_TAG}"
+          IMAGE_LATEST="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO}:latest"
 
+          docker tag "${IMAGE_SHA}" "${IMAGE_LATEST}"
           docker push "${IMAGE_SHA}"
+          docker push "${IMAGE_LATEST}"
 
-      - name: Push backend image with SHA tag
+      - name: Push backend image with SHA and latest tags
         if: needs.resolve.outputs.build_backend == 'true'
         shell: bash
         run: |
           set -euo pipefail
           REPO="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
           IMAGE_SHA="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO}:${IMAGE_TAG}"
+          IMAGE_LATEST="${RESOLVED_AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO}:latest"
 
+          docker tag "${IMAGE_SHA}" "${IMAGE_LATEST}"
           docker push "${IMAGE_SHA}"
+          docker push "${IMAGE_LATEST}"
 
   deploy:
     name: Deploy to Dev
