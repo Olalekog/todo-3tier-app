@@ -236,7 +236,7 @@ jobs:
     uses: ./.github/workflows/security-tools.yml
     with:
       environment: ${{ needs.resolve.outputs.environment }}
-      action: apply
+      action: plan
       image_tag: ${{ needs.resolve.outputs.image_tag }}
       scan_frontend: ${{ needs.resolve.outputs.build_frontend == 'true' }}
       scan_backend: ${{ needs.resolve.outputs.build_backend == 'true' }}
@@ -252,7 +252,7 @@ jobs:
     uses: ./.github/workflows/security-tools.yml
     with:
       environment: ${{ github.event.pull_request.base.ref }}
-      action: apply
+      action: plan
       image_tag: ${{ github.sha }}
       scan_frontend: false
       scan_backend: false

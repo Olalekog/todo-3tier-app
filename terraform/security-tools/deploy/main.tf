@@ -84,7 +84,7 @@ module "sonarqube_compute" {
   subnet_id                   = var.sonarqube_subnet_id
   security_group_id           = module.security_groups.sonarqube_security_group_id
   associate_public_ip_address = true
-  disable_api_termination     = true
+  disable_api_termination     = false
   user_data_replace_on_change = false
 
   image_uri               = ""

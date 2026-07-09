@@ -6,10 +6,7 @@ on:
       - dev
     paths:
       - "terraform/security-tools/deploy/**"
-      - "terraform/modules/compute/**"
-      - "terraform/modules/security-groups/**"
       - "terraform/templates/user_data_sonarqube.sh.tftpl"
-      - "terraform/environments/dev.tfvars"
       - ".github/workflows/sonarqube-deploy.yml"
   workflow_dispatch:
 
@@ -328,6 +325,31 @@ jobs:
 
           echo "vpc_id=${VPC_ID}" >> "$GITHUB_OUTPUT"
           echo "sonarqube_subnet_id=${SONARQUBE_SUBNET_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Disable SonarQube termination protection
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INSTANCE_NAME="${PROJECT_NAME}-${ENVIRONMENT}-sonarqube"
+          INSTANCE_IDS="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --filters "Name=tag:Name,Values=${INSTANCE_NAME}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query 'Reservations[].Instances[].InstanceId' \
+            --output text)"
+
+          if [[ -z "${INSTANCE_IDS}" || "${INSTANCE_IDS}" == "None" ]]; then
+            echo "No active SonarQube instances found for tag Name=${INSTANCE_NAME}."
+            exit 0
+          fi
+
+          for INSTANCE_ID in ${INSTANCE_IDS}; do
+            echo "Disabling termination protection on ${INSTANCE_ID}."
+            aws ec2 modify-instance-attribute \
+              --region "${AWS_REGION}" \
+              --instance-id "${INSTANCE_ID}" \
+              --no-disable-api-termination
+          done
 
       - name: Terraform apply
         working-directory: terraform/security-tools/deploy

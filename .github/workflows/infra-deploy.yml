@@ -32,7 +32,7 @@ jobs:
     uses: ./.github/workflows/security-tools.yml
     with:
       environment: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'dev' }}
-      action: apply
+      action: plan
       image_tag: ${{ github.sha }}
       scan_frontend: false
       scan_backend: false
