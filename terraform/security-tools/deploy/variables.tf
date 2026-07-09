@@ -26,6 +26,7 @@ variable "sonarqube_subnet_id" {
 variable "ami_id" {
   description = "AMI ID for SonarQube EC2 instance."
   type        = string
+  default     = ""
 }
 
 variable "allowed_ssh_cidr" {

@@ -3,6 +3,21 @@ data "aws_subnet" "sonarqube" {
   id    = var.sonarqube_subnet_id
 }
 
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"]
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 data "aws_instances" "existing_sonarqube" {
   count = var.enable_sonarqube ? 1 : 0
 
@@ -23,7 +38,7 @@ data "aws_instance" "existing_sonarqube" {
 }
 
 locals {
-  sonarqube_ami_id = length(data.aws_instance.existing_sonarqube) > 0 ? data.aws_instance.existing_sonarqube[0].ami : var.ami_id
+  sonarqube_ami_id = length(data.aws_instance.existing_sonarqube) > 0 ? data.aws_instance.existing_sonarqube[0].ami : (var.ami_id != "" ? var.ami_id : data.aws_ami.ubuntu.id)
 }
 
 check "sonarqube_subnet_in_vpc" {

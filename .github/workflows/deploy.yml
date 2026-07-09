@@ -74,6 +74,10 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: terraform-${{ github.event_name == 'workflow_call' && inputs.environment || github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
@@ -350,7 +354,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve.outputs.environment == 'prod' && 'prod' || '' }}
     env:
+      TFVARS_FILE: ${{ needs.resolve.outputs.tfvars_file }}
       STATE_KEY: ${{ needs.resolve.outputs.state_key }}
+      FRONTEND_IMAGE_TAG: ${{ needs.resolve.outputs.frontend_image_tag }}
+      BACKEND_IMAGE_TAG: ${{ needs.resolve.outputs.backend_image_tag }}
+      TARGET_ARGS: ${{ needs.resolve.outputs.target_args }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
     steps:
       - name: Checkout repository
@@ -391,4 +400,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          set +e
+          terraform apply -auto-approve tfplan > apply.log 2>&1
+          APPLY_EXIT=$?
+          set -e
+
+          cat apply.log
+
+          if [[ ${APPLY_EXIT} -eq 0 ]]; then
+            exit 0
+          fi
+
+          if ! grep -q "Saved plan is stale" apply.log; then
+            exit ${APPLY_EXIT}
+          fi
+
+          echo "Saved plan is stale because the Terraform state changed after planning."
+          echo "Creating a fresh plan now that this workflow owns the Terraform concurrency slot."
+
+          terraform plan ${TARGET_ARGS} \
+            -var-file="${TFVARS_FILE}" \
+            -var="aws_region=${AWS_REGION}" \
+            -var="project_name=${PROJECT_NAME}" \
+            -var="db_password=${DB_PASSWORD}" \
+            -var="frontend_image_tag=${FRONTEND_IMAGE_TAG}" \
+            -var="backend_image_tag=${BACKEND_IMAGE_TAG}" \
+            -out=tfplan
+
           terraform apply -auto-approve tfplan

@@ -18,6 +18,10 @@ permissions:
   contents: read
   actions: write
 
+concurrency:
+  group: terraform-sonarqube-dev
+  cancel-in-progress: false
+
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
@@ -33,6 +37,7 @@ jobs:
     outputs:
       tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
       state_key: ${{ steps.resolve.outputs.state_key }}
+      app_state_key: ${{ steps.resolve.outputs.app_state_key }}
 
     steps:
       - name: Resolve inputs
@@ -43,11 +48,13 @@ jobs:
 
           ACTION="apply"
 
-          TFVARS_FILE="environments/dev.tfvars"
-          STATE_KEY="${PROJECT_NAME}/dev/terraform.tfstate"
+          TFVARS_FILE="sonarqube.tfvars"
+          STATE_KEY="${PROJECT_NAME}/dev/security-tools/sonarqube.tfstate"
+          APP_STATE_KEY="${PROJECT_NAME}/dev/terraform.tfstate"
 
           echo "tfvars_file=${TFVARS_FILE}" >> "$GITHUB_OUTPUT"
           echo "state_key=${STATE_KEY}" >> "$GITHUB_OUTPUT"
+          echo "app_state_key=${APP_STATE_KEY}" >> "$GITHUB_OUTPUT"
 
   plan-sonarqube:
     name: Terraform Plan SonarQube
@@ -57,8 +64,9 @@ jobs:
     env:
       TFVARS_FILE: ${{ needs.resolve.outputs.tfvars_file }}
       STATE_KEY: ${{ needs.resolve.outputs.state_key }}
-      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-      SONARQUBE_TFVARS_FILE: security-tools/deploy/sonarqube.tfvars
+      ENVIRONMENT: dev
+      ALLOWED_SSH_CIDR: 0.0.0.0/0
+      USER_DATA_TEMPLATE_PATH: ../../templates/user_data_sonarqube.sh.tftpl
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -88,13 +96,47 @@ jobs:
             -backend-config="encrypt=true"
           terraform validate
 
-      - name: Remove terminated SonarQube instance from state
-        working-directory: terraform
+      - name: Resolve app network for SonarQube
+        id: network
         shell: bash
         run: |
           set -euo pipefail
 
-          INSTANCE_ADDRESS="module.security_integration.module.sonarqube_compute[0].aws_instance.this"
+          VPC_NAME="${PROJECT_NAME}-${ENVIRONMENT}-vpc"
+          SUBNET_NAME="${PROJECT_NAME}-${ENVIRONMENT}-public-1"
+
+          VPC_ID="$(aws ec2 describe-vpcs \
+            --region "${AWS_REGION}" \
+            --filters "Name=tag:Name,Values=${VPC_NAME}" "Name=state,Values=available" \
+            --query 'Vpcs[0].VpcId' \
+            --output text)"
+
+          if [[ -z "${VPC_ID}" || "${VPC_ID}" == "None" ]]; then
+            echo "No available app VPC found with tag Name=${VPC_NAME}."
+            exit 1
+          fi
+
+          SONARQUBE_SUBNET_ID="$(aws ec2 describe-subnets \
+            --region "${AWS_REGION}" \
+            --filters "Name=vpc-id,Values=${VPC_ID}" "Name=tag:Name,Values=${SUBNET_NAME}" \
+            --query 'Subnets[0].SubnetId' \
+            --output text)"
+
+          if [[ -z "${SONARQUBE_SUBNET_ID}" || "${SONARQUBE_SUBNET_ID}" == "None" ]]; then
+            echo "No public subnet found with tag Name=${SUBNET_NAME} in VPC ${VPC_ID}."
+            exit 1
+          fi
+
+          echo "vpc_id=${VPC_ID}" >> "$GITHUB_OUTPUT"
+          echo "sonarqube_subnet_id=${SONARQUBE_SUBNET_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Remove terminated SonarQube instance from state
+        working-directory: terraform/security-tools/deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INSTANCE_ADDRESS="module.sonarqube_compute[0].aws_instance.this"
           INSTANCE_ID="$(terraform state show "${INSTANCE_ADDRESS}" 2>/dev/null | awk -F ' = ' '/^[[:space:]]*id[[:space:]]*=/{print $2; exit}' || true)"
 
           if [[ -z "${INSTANCE_ID}" ]]; then
@@ -116,17 +158,23 @@ jobs:
           fi
 
       - name: Reconcile existing SonarQube resources into state
-        working-directory: terraform
+        working-directory: terraform/security-tools/deploy
         shell: bash
+        env:
+          VPC_ID: ${{ steps.network.outputs.vpc_id }}
+          SONARQUBE_SUBNET_ID: ${{ steps.network.outputs.sonarqube_subnet_id }}
         run: |
           set -euo pipefail
 
           TF_IMPORT_ARGS=(
             -var-file="${TFVARS_FILE}"
-            -var-file="${SONARQUBE_TFVARS_FILE}"
             -var="aws_region=${AWS_REGION}"
             -var="project_name=${PROJECT_NAME}"
-            -var="db_password=${DB_PASSWORD}"
+            -var="environment=${ENVIRONMENT}"
+            -var="vpc_id=${VPC_ID}"
+            -var="sonarqube_subnet_id=${SONARQUBE_SUBNET_ID}"
+            -var="allowed_ssh_cidr=${ALLOWED_SSH_CIDR}"
+            -var="user_data_template_path=${USER_DATA_TEMPLATE_PATH}"
           )
 
           tf_import_if_missing() {
@@ -149,17 +197,12 @@ jobs:
           SONARQUBE_PROFILE="${PROJECT_ENV_PREFIX}-sonarqube-instance-profile"
           SONARQUBE_SG_NAME="${PROJECT_ENV_PREFIX}-sonarqube-sg"
           SONARQUBE_INSTANCE_NAME="${PROJECT_ENV_PREFIX}-sonarqube"
-          VPC_ID="$(terraform state show module.network.aws_vpc.main 2>/dev/null | awk -F ' = ' '/^[[:space:]]*id[[:space:]]*=/{print $2; exit}' || true)"
 
-          if [[ -n "${VPC_ID}" ]]; then
-            SONARQUBE_SG_ID="$(aws ec2 describe-security-groups \
-              --region "${AWS_REGION}" \
-              --filters "Name=group-name,Values=${SONARQUBE_SG_NAME}" "Name=vpc-id,Values=${VPC_ID}" \
-              --query 'SecurityGroups[0].GroupId' \
-              --output text 2>/dev/null || true)"
-          else
-            SONARQUBE_SG_ID=""
-          fi
+          SONARQUBE_SG_ID="$(aws ec2 describe-security-groups \
+            --region "${AWS_REGION}" \
+            --filters "Name=group-name,Values=${SONARQUBE_SG_NAME}" "Name=vpc-id,Values=${VPC_ID}" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text 2>/dev/null || true)"
 
           SONARQUBE_INSTANCE_ID="$(aws ec2 describe-instances \
             --region "${AWS_REGION}" \
@@ -167,37 +210,42 @@ jobs:
             --query 'Reservations[].Instances[].InstanceId' \
             --output text | awk '{print $1}')"
 
-          tf_import_if_missing "module.security_integration.module.sonarqube_compute[0].aws_iam_role.this" "${SONARQUBE_ROLE}" "aws iam get-role --role-name ${SONARQUBE_ROLE} --output json"
-          tf_import_if_missing "module.security_integration.module.sonarqube_compute[0].aws_iam_instance_profile.this" "${SONARQUBE_PROFILE}" "aws iam get-instance-profile --instance-profile-name ${SONARQUBE_PROFILE} --output json"
-          tf_import_if_missing "module.security_integration.module.sonarqube_compute[0].aws_iam_role_policy_attachment.ssm" "${SONARQUBE_ROLE}/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" "aws iam list-attached-role-policies --role-name ${SONARQUBE_ROLE} --query \"contains(AttachedPolicies[].PolicyArn, 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore')\" --output text | grep -q true"
+          tf_import_if_missing "module.sonarqube_compute[0].aws_iam_role.this" "${SONARQUBE_ROLE}" "aws iam get-role --role-name ${SONARQUBE_ROLE} --output json"
+          tf_import_if_missing "module.sonarqube_compute[0].aws_iam_instance_profile.this" "${SONARQUBE_PROFILE}" "aws iam get-instance-profile --instance-profile-name ${SONARQUBE_PROFILE} --output json"
+          tf_import_if_missing "module.sonarqube_compute[0].aws_iam_role_policy_attachment.ssm" "${SONARQUBE_ROLE}/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" "aws iam list-attached-role-policies --role-name ${SONARQUBE_ROLE} --query \"contains(AttachedPolicies[].PolicyArn, 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore')\" --output text | grep -q true"
 
           if [[ -n "${SONARQUBE_SG_ID}" && "${SONARQUBE_SG_ID}" != "None" ]]; then
-            tf_import_if_missing "module.security_integration.module.security_groups.aws_security_group.sonarqube[0]" "${SONARQUBE_SG_ID}" "aws ec2 describe-security-groups --region ${AWS_REGION} --group-ids ${SONARQUBE_SG_ID} --output json"
+            tf_import_if_missing "module.security_groups.aws_security_group.sonarqube[0]" "${SONARQUBE_SG_ID}" "aws ec2 describe-security-groups --region ${AWS_REGION} --group-ids ${SONARQUBE_SG_ID} --output json"
           fi
 
           if [[ -n "${SONARQUBE_INSTANCE_ID}" && "${SONARQUBE_INSTANCE_ID}" != "None" ]]; then
-            tf_import_if_missing "module.security_integration.module.sonarqube_compute[0].aws_instance.this" "${SONARQUBE_INSTANCE_ID}" "aws ec2 describe-instances --region ${AWS_REGION} --instance-ids ${SONARQUBE_INSTANCE_ID} --output json"
+            tf_import_if_missing "module.sonarqube_compute[0].aws_instance.this" "${SONARQUBE_INSTANCE_ID}" "aws ec2 describe-instances --region ${AWS_REGION} --instance-ids ${SONARQUBE_INSTANCE_ID} --output json"
           fi
 
       - name: Terraform plan SonarQube
-        working-directory: terraform
+        working-directory: terraform/security-tools/deploy
         shell: bash
+        env:
+          VPC_ID: ${{ steps.network.outputs.vpc_id }}
+          SONARQUBE_SUBNET_ID: ${{ steps.network.outputs.sonarqube_subnet_id }}
         run: |
           set -euo pipefail
           terraform plan \
             -var-file="${TFVARS_FILE}" \
-            -var-file="${SONARQUBE_TFVARS_FILE}" \
             -var="aws_region=${AWS_REGION}" \
             -var="project_name=${PROJECT_NAME}" \
-            -var="db_password=${DB_PASSWORD}" \
-            -target=module.security_integration \
+            -var="environment=${ENVIRONMENT}" \
+            -var="vpc_id=${VPC_ID}" \
+            -var="sonarqube_subnet_id=${SONARQUBE_SUBNET_ID}" \
+            -var="allowed_ssh_cidr=${ALLOWED_SSH_CIDR}" \
+            -var="user_data_template_path=${USER_DATA_TEMPLATE_PATH}" \
             -out=sonarqube-tfplan
 
       - name: Upload SonarQube plan
         uses: actions/upload-artifact@v4
         with:
           name: sonarqube-plan
-          path: terraform/sonarqube-tfplan
+          path: terraform/security-tools/deploy/sonarqube-tfplan
           if-no-files-found: error
 
   apply-sonarqube:
@@ -207,7 +255,12 @@ jobs:
       - resolve
       - plan-sonarqube
     env:
+      TFVARS_FILE: ${{ needs.resolve.outputs.tfvars_file }}
       STATE_KEY: ${{ needs.resolve.outputs.state_key }}
+      APP_STATE_KEY: ${{ needs.resolve.outputs.app_state_key }}
+      ENVIRONMENT: dev
+      ALLOWED_SSH_CIDR: 0.0.0.0/0
+      USER_DATA_TEMPLATE_PATH: ../../templates/user_data_sonarqube.sh.tftpl
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -226,7 +279,7 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform init
-        working-directory: terraform
+        working-directory: terraform/security-tools/deploy
         shell: bash
         run: |
           set -euo pipefail
@@ -240,18 +293,114 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: sonarqube-plan
-          path: terraform
+          path: terraform/security-tools/deploy
+
+      - name: Resolve app network for SonarQube
+        id: network
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VPC_NAME="${PROJECT_NAME}-${ENVIRONMENT}-vpc"
+          SUBNET_NAME="${PROJECT_NAME}-${ENVIRONMENT}-public-1"
+
+          VPC_ID="$(aws ec2 describe-vpcs \
+            --region "${AWS_REGION}" \
+            --filters "Name=tag:Name,Values=${VPC_NAME}" "Name=state,Values=available" \
+            --query 'Vpcs[0].VpcId' \
+            --output text)"
+
+          if [[ -z "${VPC_ID}" || "${VPC_ID}" == "None" ]]; then
+            echo "No available app VPC found with tag Name=${VPC_NAME}."
+            exit 1
+          fi
+
+          SONARQUBE_SUBNET_ID="$(aws ec2 describe-subnets \
+            --region "${AWS_REGION}" \
+            --filters "Name=vpc-id,Values=${VPC_ID}" "Name=tag:Name,Values=${SUBNET_NAME}" \
+            --query 'Subnets[0].SubnetId' \
+            --output text)"
+
+          if [[ -z "${SONARQUBE_SUBNET_ID}" || "${SONARQUBE_SUBNET_ID}" == "None" ]]; then
+            echo "No public subnet found with tag Name=${SUBNET_NAME} in VPC ${VPC_ID}."
+            exit 1
+          fi
+
+          echo "vpc_id=${VPC_ID}" >> "$GITHUB_OUTPUT"
+          echo "sonarqube_subnet_id=${SONARQUBE_SUBNET_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Terraform apply
+        working-directory: terraform/security-tools/deploy
+        shell: bash
+        env:
+          VPC_ID: ${{ steps.network.outputs.vpc_id }}
+          SONARQUBE_SUBNET_ID: ${{ steps.network.outputs.sonarqube_subnet_id }}
+        run: |
+          set -euo pipefail
+
+          set +e
+          terraform apply -auto-approve sonarqube-tfplan > apply.log 2>&1
+          APPLY_EXIT=$?
+          set -e
+
+          cat apply.log
+
+          if [[ ${APPLY_EXIT} -eq 0 ]]; then
+            exit 0
+          fi
+
+          if ! grep -q "Saved plan is stale" apply.log; then
+            exit ${APPLY_EXIT}
+          fi
+
+          echo "Saved plan is stale because the Terraform state changed after planning."
+          echo "Creating a fresh SonarQube plan now that this workflow owns the Terraform concurrency slot."
+
+          terraform plan \
+            -var-file="${TFVARS_FILE}" \
+            -var="aws_region=${AWS_REGION}" \
+            -var="project_name=${PROJECT_NAME}" \
+            -var="environment=${ENVIRONMENT}" \
+            -var="vpc_id=${VPC_ID}" \
+            -var="sonarqube_subnet_id=${SONARQUBE_SUBNET_ID}" \
+            -var="allowed_ssh_cidr=${ALLOWED_SSH_CIDR}" \
+            -var="user_data_template_path=${USER_DATA_TEMPLATE_PATH}" \
+            -out=sonarqube-tfplan
+
+          terraform apply -auto-approve sonarqube-tfplan
+
+      - name: Detach SonarQube resources from app state
         working-directory: terraform
         shell: bash
         run: |
           set -euo pipefail
-          terraform apply -auto-approve sonarqube-tfplan
+
+          terraform init -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${APP_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+          ADDRESSES=(
+            "module.security_integration.module.sonarqube_compute[0].aws_instance.this"
+            "module.security_integration.module.sonarqube_compute[0].aws_iam_instance_profile.this"
+            "module.security_integration.module.sonarqube_compute[0].aws_iam_role.this"
+            "module.security_integration.module.sonarqube_compute[0].aws_iam_role_policy_attachment.ssm"
+            "module.security_integration.module.security_groups.aws_security_group.sonarqube[0]"
+          )
+
+          for address in "${ADDRESSES[@]}"; do
+            if terraform state show "${address}" >/dev/null 2>&1; then
+              echo "Removing ${address} from app Terraform state."
+              terraform state rm "${address}"
+            else
+              echo "${address} is not present in app Terraform state."
+            fi
+          done
 
       - name: Show SonarQube URL
         id: sonarqube_url
-        working-directory: terraform
+        working-directory: terraform/security-tools/deploy
         shell: bash
         run: |
           set -euo pipefail
