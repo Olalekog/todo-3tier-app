@@ -268,8 +268,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActionsSonarQubeScan
 
-      - name: Allow this runner to reach SonarQube
-        id: sonar_access
+      - name: Resolve the running SonarQube instance
         shell: bash
         env:
           ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
@@ -277,14 +276,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          RUNNER_IP="$(curl -fsS --connect-timeout 10 https://api.ipify.org)"
-          RUNNER_CIDR="${RUNNER_IP}/32"
           CANDIDATE_NAMES=("${PROJECT_NAME}-${ENVIRONMENT}-sonarqube" "${PROJECT_NAME}-dev-sonarqube")
-
-          if [[ -z "${RUNNER_IP}" ]]; then
-            echo "Unable to resolve runner public IP."
-            exit 1
-          fi
 
           INSTANCE_ID=""
           for INSTANCE_NAME in "${CANDIDATE_NAMES[@]}"; do
@@ -330,31 +322,13 @@ jobs:
             --query 'Reservations[0].Instances[0].PublicIpAddress' \
             --output text)"
 
-          SG_IDS="$(aws ec2 describe-instances \
-            --region "${AWS_REGION}" \
-            --instance-ids "${INSTANCE_ID}" \
-            --query 'Reservations[].Instances[].SecurityGroups[].GroupId' \
-            --output text)"
-
-          if [[ -z "${SONAR_IP}" || "${SONAR_IP}" == "None" || -z "${SG_IDS}" || "${SG_IDS}" == "None" ]]; then
-            echo "SonarQube instance ${INSTANCE_ID} is missing a public IP or security group."
+          if [[ -z "${SONAR_IP}" || "${SONAR_IP}" == "None" ]]; then
+            echo "SonarQube instance ${INSTANCE_ID} is missing a public IP."
             exit 1
           fi
 
           echo "SONAR_HOST_URL=http://${SONAR_IP}:9000" >> "$GITHUB_ENV"
           echo "Resolved SonarQube URL: http://${SONAR_IP}:9000"
-
-          for SG_ID in ${SG_IDS}; do
-            echo "Authorizing ${RUNNER_CIDR} for ${SG_ID}:9000"
-            aws ec2 authorize-security-group-ingress \
-              --region "${AWS_REGION}" \
-              --group-id "${SG_ID}" \
-              --ip-permissions "IpProtocol=tcp,FromPort=9000,ToPort=9000,IpRanges=[{CidrIp=${RUNNER_CIDR},Description=github-actions-sonarqube-scan}]" \
-              >/dev/null 2>&1 || true
-          done
-
-          echo "runner_cidr=${RUNNER_CIDR}" >> "$GITHUB_OUTPUT"
-          echo "security_group_ids=${SG_IDS}" >> "$GITHUB_OUTPUT"
 
       - name: Verify SonarQube is ready
         shell: bash
@@ -398,24 +372,6 @@ jobs:
             -Dsonar.qualitygate.timeout=300
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
-      - name: Revoke runner SonarQube access
-        if: always() && steps.sonar_access.outputs.security_group_ids != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          RUNNER_CIDR="${{ steps.sonar_access.outputs.runner_cidr }}"
-          SG_IDS="${{ steps.sonar_access.outputs.security_group_ids }}"
-
-          for SG_ID in ${SG_IDS}; do
-            echo "Revoking ${RUNNER_CIDR} from ${SG_ID}:9000"
-            aws ec2 revoke-security-group-ingress \
-              --region "${AWS_REGION}" \
-              --group-id "${SG_ID}" \
-              --ip-permissions "IpProtocol=tcp,FromPort=9000,ToPort=9000,IpRanges=[{CidrIp=${RUNNER_CIDR}}]" \
-              >/dev/null 2>&1 || true
-          done
 
   build-images:
     name: Build Images for Trivy
