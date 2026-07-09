@@ -18,6 +18,7 @@ echo "BACKEND_HOST=$${BACKEND_HOST}"
 apt-get update -y
 apt-get install -y ca-certificates curl unzip jq netcat-openbsd docker.io nginx
 
+rm -f /var/www/html/index.nginx-debian.html /usr/share/nginx/html/index.html /usr/share/nginx/html/index.nginx-debian.html || true
 FALLBACK_INDEX="/var/www/html/index.html"
 cat > "$${FALLBACK_INDEX}" <<'EOF'
 <!DOCTYPE html>
@@ -38,6 +39,7 @@ cat > "$${FALLBACK_INDEX}" <<'EOF'
 </body>
 </html>
 EOF
+cp "$${FALLBACK_INDEX}" /var/www/html/index.nginx-debian.html
 
 systemctl enable nginx
 systemctl restart nginx

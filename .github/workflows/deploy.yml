@@ -468,8 +468,10 @@ jobs:
             --query 'Reservations[].Instances[].{InstanceId:InstanceId,State:State.Name,Name:Tags[?Key==`Name`]|[0].Value,PublicIp:PublicIpAddress,PrivateIp:PrivateIpAddress,SecurityGroups:SecurityGroups[].GroupId,LaunchTime:LaunchTime}'
 
           FRONTEND_READY=false
+          FRONTEND_BODY=""
           for i in {1..30}; do
-            if curl -fsS --connect-timeout 10 --max-time 15 "${FRONTEND_URL}" >/dev/null; then
+            FRONTEND_BODY="$(curl -fsS --connect-timeout 10 --max-time 15 "${FRONTEND_URL}" || true)"
+            if [[ -n "${FRONTEND_BODY}" ]]; then
               FRONTEND_READY=true
               break
             fi
@@ -478,9 +480,14 @@ jobs:
             sleep 15
           done
 
-          if [[ "${FRONTEND_READY}" == "true" ]]; then
+          if [[ "${FRONTEND_READY}" == "true" && "${FRONTEND_BODY}" != *"Welcome to nginx"* && "${FRONTEND_BODY}" != *"Todo app is starting"* ]]; then
             echo "Frontend HTTP check passed."
           else
+            if [[ "${FRONTEND_READY}" == "true" ]]; then
+              echo "Frontend HTTP returned content, but it is not the React todo app."
+              echo "${FRONTEND_BODY}" | head -n 40
+            fi
+
             echo "Frontend HTTP check failed. Recent console output follows."
             aws ec2 get-console-output \
               --region "${AWS_REGION}" \
@@ -494,7 +501,7 @@ jobs:
               --instance-ids "${INSTANCE_ID}" \
               --document-name "AWS-RunShellScript" \
               --comment "Frontend diagnostics after failed HTTP check" \
-              --parameters 'commands=["cloud-init status --long || true","systemctl status nginx --no-pager || true","systemctl status docker --no-pager || true","ss -ltnp || true","docker ps -a || true","docker logs todo-frontend --tail 120 || true","tail -n 200 /var/log/user-data-frontend.log || true"]' \
+              --parameters 'commands=["cloud-init status --long || true","systemctl status nginx --no-pager || true","systemctl status docker --no-pager || true","ss -ltnp || true","curl -fsS http://localhost | head -n 80 || true","docker ps -a || true","docker exec todo-frontend sh -c \"ls -la /usr/share/nginx/html && sed -n 1,80p /usr/share/nginx/html/index.html\" || true","docker logs todo-frontend --tail 120 || true","tail -n 200 /var/log/user-data-frontend.log || true"]' \
               --query 'Command.CommandId' \
               --output text 2>/dev/null || true)"
 
@@ -509,4 +516,6 @@ jobs:
             else
               echo "Could not start SSM diagnostics. The instance may not be registered with SSM yet."
             fi
+
+            exit 1
           fi
