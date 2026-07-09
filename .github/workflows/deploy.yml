@@ -467,6 +467,40 @@ jobs:
             --instance-ids "${INSTANCE_ID}" \
             --query 'Reservations[].Instances[].{InstanceId:InstanceId,State:State.Name,Name:Tags[?Key==`Name`]|[0].Value,PublicIp:PublicIpAddress,PrivateIp:PrivateIpAddress,SecurityGroups:SecurityGroups[].GroupId,LaunchTime:LaunchTime}'
 
+          FRONTEND_SG_ID="$(aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' \
+            --output text)"
+
+          BACKEND_SG_ID="$(aws ec2 describe-security-groups \
+            --region "${AWS_REGION}" \
+            --filters "Name=group-name,Values=${PROJECT_NAME}-${{ needs.resolve.outputs.environment }}-backend-sg" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text)"
+
+          echo "Frontend security group: ${FRONTEND_SG_ID}"
+          echo "Backend security group: ${BACKEND_SG_ID}"
+
+          BACKEND_SG_JSON="$(aws ec2 describe-security-groups \
+            --region "${AWS_REGION}" \
+            --group-ids "${BACKEND_SG_ID}" \
+            --output json)"
+
+          echo "${BACKEND_SG_JSON}" | jq '.SecurityGroups[0].IpPermissions'
+
+          if echo "${BACKEND_SG_JSON}" | jq -e --arg frontend_sg "${FRONTEND_SG_ID}" '
+            .SecurityGroups[0].IpPermissions[]
+            | select(.IpProtocol == "tcp")
+            | select(.FromPort <= 8000 and .ToPort >= 8000)
+            | select(any(.UserIdGroupPairs[]?; .GroupId == $frontend_sg))
+          ' >/dev/null; then
+            echo "Backend SG allows TCP 8000 from the frontend SG."
+          else
+            echo "Backend SG does not allow TCP 8000 from the frontend SG."
+            exit 1
+          fi
+
           FRONTEND_READY=false
           FRONTEND_BODY=""
           for i in {1..30}; do
@@ -488,6 +522,13 @@ jobs:
 
           if [[ "${FRONTEND_READY}" == "true" ]]; then
             echo "Frontend HTTP check passed."
+            API_HEALTH="$(curl -fsS --connect-timeout 10 --max-time 15 "${FRONTEND_URL%/}/api/health" || true)"
+            if [[ -n "${API_HEALTH}" ]]; then
+              echo "Frontend API proxy health response: ${API_HEALTH}"
+            else
+              echo "Frontend is serving the React app, but /api/health is not reachable through Nginx."
+              exit 1
+            fi
           else
             if [[ "${FRONTEND_READY}" == "true" ]]; then
               echo "Frontend HTTP returned content, but it is not the React todo app."

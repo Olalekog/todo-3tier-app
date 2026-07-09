@@ -14,6 +14,7 @@ DB_NAME = os.environ.get("DB_NAME", "tododb")
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 
 app = FastAPI(title="Todo API")
+DB_INITIALIZED = False
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,11 +24,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 class TodoCreate(BaseModel):
     title: str
 
+
 class TodoUpdate(BaseModel):
     completed: bool
+
 
 class Todo(BaseModel):
     id: int
@@ -72,21 +76,55 @@ def init_db():
                 SELECT 1 FROM todos WHERE title = %s
             )
             """,
-            ("Test To-Do item created during application initialization", False, "Test To-Do item created during application initialization"),
+            (
+                "Test To-Do item created during application initialization",
+                False,
+                "Test To-Do item created during application initialization",
+            ),
         )
     conn.close()
 
+
+def ensure_db_initialized(retries: int = 1, delay: float = 1.0):
+    global DB_INITIALIZED
+
+    if DB_INITIALIZED:
+        return
+
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            init_db()
+            DB_INITIALIZED = True
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt < retries:
+                time.sleep(delay)
+
+    raise HTTPException(status_code=503, detail=f"Database is not ready: {last_error}")
+
+
 @app.on_event("startup")
 def startup():
-    init_db()
+    try:
+        ensure_db_initialized(retries=12, delay=5.0)
+    except HTTPException as exc:
+        print(exc.detail)
+
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    try:
+        ensure_db_initialized()
+        return {"status": "ok", "database": "ok"}
+    except HTTPException as exc:
+        return {"status": "degraded", "database": exc.detail}
 
 
 @app.post("/seed")
 def seed_test_todo():
+    ensure_db_initialized(retries=3, delay=2.0)
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(
@@ -99,8 +137,10 @@ def seed_test_todo():
     conn.close()
     return row
 
+
 @app.get("/todos", response_model=List[Todo])
 def list_todos():
+    ensure_db_initialized(retries=3, delay=2.0)
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("SELECT id, title, completed FROM todos ORDER BY id DESC")
@@ -108,8 +148,10 @@ def list_todos():
     conn.close()
     return rows
 
+
 @app.post("/todos", response_model=Todo)
 def create_todo(todo: TodoCreate):
+    ensure_db_initialized(retries=3, delay=2.0)
     if not todo.title.strip():
         raise HTTPException(status_code=400, detail="Title is required")
     conn = get_connection()
@@ -121,8 +163,10 @@ def create_todo(todo: TodoCreate):
     conn.close()
     return row
 
+
 @app.put("/todos/{todo_id}", response_model=Todo)
 def update_todo(todo_id: int, update: TodoUpdate):
+    ensure_db_initialized(retries=3, delay=2.0)
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("UPDATE todos SET completed=%s WHERE id=%s", (update.completed, todo_id))
@@ -133,8 +177,10 @@ def update_todo(todo_id: int, update: TodoUpdate):
         raise HTTPException(status_code=404, detail="Todo not found")
     return row
 
+
 @app.delete("/todos/{todo_id}")
 def delete_todo(todo_id: int):
+    ensure_db_initialized(retries=3, delay=2.0)
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("DELETE FROM todos WHERE id=%s", (todo_id,))

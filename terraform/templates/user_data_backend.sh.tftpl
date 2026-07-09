@@ -61,7 +61,20 @@ else
 fi
 
 echo "Checking database connectivity..."
-nc -vz "$${DB_HOST}" "$${DB_PORT}"
+DB_REACHABLE=false
+for i in $(seq 1 30); do
+  if nc -vz "$${DB_HOST}" "$${DB_PORT}"; then
+    DB_REACHABLE=true
+    break
+  fi
+
+  echo "Database is not reachable yet at $${DB_HOST}:$${DB_PORT}. Attempt $${i}/30"
+  sleep 10
+done
+
+if [[ "$${DB_REACHABLE}" != "true" ]]; then
+  echo "WARNING: Database is not reachable yet. Starting backend anyway; API requests will retry database initialization."
+fi
 
 docker rm -f "$${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
