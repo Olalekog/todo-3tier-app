@@ -91,6 +91,11 @@ ensure_docker() {
   echo "Installing Docker from Ubuntu package repositories."
   retry 6 apt-get install -y docker.io || true
 
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker package is still unavailable; trying Docker's official install script."
+    curl -fsSL https://get.docker.com -o /tmp/get-docker.sh && sh /tmp/get-docker.sh || true
+  fi
+
   if ! command -v docker >/dev/null 2>&1 && command -v snap >/dev/null 2>&1; then
     echo "Docker package is still unavailable; trying snap docker as a fallback."
     snap install docker || true
