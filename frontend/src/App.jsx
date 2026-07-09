@@ -81,7 +81,7 @@ async function requestJson(path, options = {}) {
     }
   }
 
-  throw lastError || new Error('API request failed and no endpoints responded.');
+  throw lastError || new Error('API request failed and no endpoint responded.');
 }
 
 function App() {
