@@ -583,24 +583,6 @@ jobs:
       - resolve_outputs
     if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.trivy == 'true')
     steps:
-      - name: Verify Trivy endpoint
-        env:
-          TRIVY_SERVER_URL: ${{ needs.resolve_outputs.outputs.trivy_server_url }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Trivy server URL: ${TRIVY_SERVER_URL}"
-          for i in {1..30}; do
-            if curl -fsS --max-time 10 "${TRIVY_SERVER_URL%/}/healthz" >/dev/null; then
-              exit 0
-            fi
-            sleep 15
-          done
-
-          echo "Trivy server did not become reachable in time."
-          exit 1
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -620,20 +602,40 @@ jobs:
             --instance-ids "${INSTANCE_ID}" \
             --document-name "AWS-RunShellScript" \
             --comment "Verify Trivy container" \
-            --parameters 'commands=["docker inspect -f '\''{{.State.Running}}'\'' trivy","docker exec trivy trivy --version"]' \
+            --parameters 'commands=["set -eux","docker ps --filter name=trivy","docker inspect -f '\''{{.State.Running}}'\'' trivy","docker logs --tail 80 trivy || true","if ! curl -fsS --max-time 10 http://127.0.0.1:4954/healthz; then docker restart trivy; sleep 20; fi","curl -fsS --max-time 10 http://127.0.0.1:4954/healthz"]' \
             --query 'Command.CommandId' \
             --output text)"
 
           sleep 15
 
-          COMMAND_STATUS="$(aws ssm get-command-invocation \
+          COMMAND_RESULT="$(aws ssm get-command-invocation \
             --region "${AWS_REGION}" \
             --command-id "${COMMAND_ID}" \
             --instance-id "${INSTANCE_ID}" \
-            --query Status \
-            --output text)"
+            --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+            --output json)"
 
+          echo "${COMMAND_RESULT}"
+          COMMAND_STATUS="$(jq -r '.Status' <<<"${COMMAND_RESULT}")"
           test "${COMMAND_STATUS}" = "Success"
+
+      - name: Verify Trivy endpoint
+        env:
+          TRIVY_SERVER_URL: ${{ needs.resolve_outputs.outputs.trivy_server_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Trivy server URL: ${TRIVY_SERVER_URL}"
+          for i in {1..30}; do
+            if curl -fsS --max-time 10 "${TRIVY_SERVER_URL%/}/healthz" >/dev/null; then
+              exit 0
+            fi
+            sleep 15
+          done
+
+          echo "Trivy server did not become reachable in time."
+          exit 1
 
   checkov:
     name: Checkov

@@ -127,6 +127,28 @@ docker run -d \
   "$${TRIVY_IMAGE}" \
   server --listen 0.0.0.0:4954
 
+echo "Waiting for Trivy server to listen on localhost:4954..."
+for attempt in $(seq 1 30); do
+  if curl -fsS --max-time 5 http://127.0.0.1:4954/healthz >/dev/null; then
+    echo "Trivy server is reachable on localhost:4954."
+    break
+  fi
+
+  if ! docker inspect -f '{{.State.Running}}' trivy 2>/dev/null | grep -q true; then
+    echo "ERROR: Trivy container is not running."
+    docker logs --tail 100 trivy || true
+    exit 1
+  fi
+
+  if [ "$${attempt}" -eq 30 ]; then
+    echo "ERROR: Trivy server did not become reachable on localhost:4954."
+    docker logs --tail 100 trivy || true
+    exit 1
+  fi
+
+  sleep 10
+done
+
 docker run -d \
   --name checkov \
   --restart unless-stopped \
