@@ -96,8 +96,8 @@ jobs:
       workload: ${{ steps.resolve.outputs.workload }}
       tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
       state_key: ${{ steps.resolve.outputs.state_key }}
-      frontend_image_tag: ${{ steps.resolve.outputs.frontend_image_tag }}
-      backend_image_tag: ${{ steps.resolve.outputs.backend_image_tag }}
+      frontend_image_tag: ${{ steps.images.outputs.frontend_image_tag || steps.resolve.outputs.frontend_image_tag }}
+      backend_image_tag: ${{ steps.images.outputs.backend_image_tag || steps.resolve.outputs.backend_image_tag }}
       target_args: ${{ steps.resolve.outputs.target_args }}
 
     steps:
@@ -169,7 +169,7 @@ jobs:
 
           TARGET_ARGS=""
           if [[ "${WORKLOAD}" == "infra" ]]; then
-            TARGET_ARGS="-target=module.network -target=module.ecr -target=module.security_groups -target=module.database -target=module.backend_compute -target=module.frontend_compute"
+            TARGET_ARGS="-target=module.network -target=module.ecr -target=module.security_groups -target=module.database"
           elif [[ "${WORKLOAD}" == "frontend" ]]; then
             TARGET_ARGS="-target=module.frontend_compute"
           elif [[ "${WORKLOAD}" == "backend" ]]; then
@@ -186,6 +186,64 @@ jobs:
           echo "frontend_image_tag=${FRONTEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "backend_image_tag=${BACKEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "target_args=${TARGET_ARGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials using GitHub OIDC
+        if: steps.resolve.outputs.workload != 'infra'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsResolveImages
+
+      - name: Resolve existing ECR image tags
+        id: images
+        if: steps.resolve.outputs.workload != 'infra'
+        shell: bash
+        env:
+          ENVIRONMENT: ${{ steps.resolve.outputs.environment }}
+          WORKLOAD: ${{ steps.resolve.outputs.workload }}
+          FRONTEND_IMAGE_TAG: ${{ steps.resolve.outputs.frontend_image_tag }}
+          BACKEND_IMAGE_TAG: ${{ steps.resolve.outputs.backend_image_tag }}
+        run: |
+          set -euo pipefail
+
+          resolve_latest_tag() {
+            local repository="$1"
+
+            aws ecr describe-images \
+              --region "${AWS_REGION}" \
+              --repository-name "${repository}" \
+              --query 'reverse(sort_by(imageDetails[?imageTags && length(imageTags) > `0`], &imagePushedAt))[0].imageTags[0]' \
+              --output text
+          }
+
+          FRONTEND_RESOLVED_TAG="${FRONTEND_IMAGE_TAG}"
+          BACKEND_RESOLVED_TAG="${BACKEND_IMAGE_TAG}"
+
+          if [[ "${WORKLOAD}" == "frontend" || "${WORKLOAD}" == "backend" || "${WORKLOAD}" == "app" ]]; then
+            if [[ -z "${FRONTEND_RESOLVED_TAG}" || "${FRONTEND_RESOLVED_TAG}" == "latest" ]]; then
+              FRONTEND_RESOLVED_TAG="$(resolve_latest_tag "${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend")"
+              if [[ -z "${FRONTEND_RESOLVED_TAG}" || "${FRONTEND_RESOLVED_TAG}" == "None" ]]; then
+                echo "No pushed frontend image tag found in ECR."
+                exit 1
+              fi
+            fi
+          fi
+
+          if [[ "${WORKLOAD}" == "backend" || "${WORKLOAD}" == "app" ]]; then
+            if [[ -z "${BACKEND_RESOLVED_TAG}" || "${BACKEND_RESOLVED_TAG}" == "latest" ]]; then
+              BACKEND_RESOLVED_TAG="$(resolve_latest_tag "${PROJECT_NAME}/${ENVIRONMENT}/todo-backend")"
+              if [[ -z "${BACKEND_RESOLVED_TAG}" || "${BACKEND_RESOLVED_TAG}" == "None" ]]; then
+                echo "No pushed backend image tag found in ECR."
+                exit 1
+              fi
+            fi
+          fi
+
+          echo "Resolved frontend image tag: ${FRONTEND_RESOLVED_TAG}"
+          echo "Resolved backend image tag: ${BACKEND_RESOLVED_TAG}"
+          echo "frontend_image_tag=${FRONTEND_RESOLVED_TAG}" >> "$GITHUB_OUTPUT"
+          echo "backend_image_tag=${BACKEND_RESOLVED_TAG}" >> "$GITHUB_OUTPUT"
 
   plan:
     name: Terraform Validate and Plan
@@ -261,9 +319,12 @@ jobs:
             frontend)
               check_image "${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend" "${FRONTEND_IMAGE_TAG}"
               ;;
-            backend|app|infra)
+            backend|app)
               check_image "${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend" "${FRONTEND_IMAGE_TAG}"
               check_image "${PROJECT_NAME}/${ENVIRONMENT}/todo-backend" "${BACKEND_IMAGE_TAG}"
+              ;;
+            infra)
+              echo "Infra workload does not deploy application images."
               ;;
           esac
 
