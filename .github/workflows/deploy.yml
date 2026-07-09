@@ -556,6 +556,14 @@ jobs:
             --instance-ids "${INSTANCE_ID}" \
             --query 'Reservations[].Instances[].{InstanceId:InstanceId,State:State.Name,Name:Tags[?Key==`Name`]|[0].Value,PublicIp:PublicIpAddress,PrivateIp:PrivateIpAddress,SecurityGroups:SecurityGroups[].GroupId,LaunchTime:LaunchTime}'
 
+          echo "Frontend instance status checks:"
+          aws ec2 describe-instance-status \
+            --region "${AWS_REGION}" \
+            --instance-ids "${INSTANCE_ID}" \
+            --include-all-instances \
+            --query 'InstanceStatuses[].{Instance:InstanceStatus.Status,System:SystemStatus.Status,State:InstanceState.Name,Events:Events[].Description}' \
+            --output json || true
+
           FRONTEND_SG_ID="$(aws ec2 describe-instances \
             --region "${AWS_REGION}" \
             --instance-ids "${INSTANCE_ID}" \
@@ -639,10 +647,28 @@ jobs:
               exit 1
             fi
           else
-            if [[ "${FRONTEND_READY}" == "true" ]]; then
+            if [[ -n "${FRONTEND_BODY}" ]]; then
               echo "Frontend HTTP returned content, but it is not the React todo app."
               echo "${FRONTEND_BODY}" | head -n 40
             fi
+
+            echo "Waiting briefly for SSM registration before recovery."
+            SSM_ONLINE=false
+            for i in {1..20}; do
+              SSM_STATUS="$(aws ssm describe-instance-information \
+                --region "${AWS_REGION}" \
+                --filters "Key=InstanceIds,Values=${INSTANCE_ID}" \
+                --query 'InstanceInformationList[0].PingStatus' \
+                --output text 2>/dev/null || true)"
+
+              if [[ "${SSM_STATUS}" == "Online" ]]; then
+                SSM_ONLINE=true
+                break
+              fi
+
+              echo "SSM status: ${SSM_STATUS:-not registered}. Attempt ${i}/20; waiting 15s..."
+              sleep 15
+            done
 
             echo "Attempting frontend HTTP recovery through SSM."
             RECOVERY_COMMAND_ID="$(aws ssm send-command \

@@ -32,17 +32,56 @@ cat > "$${EARLY_FALLBACK_DIR}/index.html" <<'EOF'
 </html>
 EOF
 
-EARLY_FALLBACK_PID=""
 if command -v python3 >/dev/null 2>&1; then
-  echo "Starting early HTTP fallback on port 80 before package installation."
-  nohup python3 -m http.server 80 --directory "$${EARLY_FALLBACK_DIR}" >/var/log/frontend-early-fallback.log 2>&1 &
-  EARLY_FALLBACK_PID="$!"
+  echo "Starting early HTTP fallback service on port 80 before package installation."
+  cat >/etc/systemd/system/frontend-fallback.service <<EOF
+[Unit]
+Description=Frontend fallback HTTP service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$${EARLY_FALLBACK_DIR}
+ExecStart=/usr/bin/python3 -m http.server 80 --directory $${EARLY_FALLBACK_DIR}
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable frontend-fallback.service
+  systemctl restart frontend-fallback.service
 else
   echo "python3 is not available for early fallback; continuing with package installation."
 fi
 
-apt-get update -y
-apt-get install -y ca-certificates curl unzip jq netcat-openbsd docker.io nginx
+retry() {
+  local attempts="$1"
+  shift
+  local delay=10
+
+  for attempt in $(seq 1 "$${attempts}"); do
+    if "$@"; then
+      return 0
+    fi
+
+    echo "Command failed on attempt $${attempt}/$${attempts}: $*"
+    sleep "$${delay}"
+  done
+
+  return 1
+}
+
+export DEBIAN_FRONTEND=noninteractive
+retry 6 apt-get update -y
+retry 6 apt-get install -y ca-certificates curl unzip jq netcat-openbsd docker.io nginx snapd
+
+if command -v snap >/dev/null 2>&1; then
+  snap list amazon-ssm-agent >/dev/null 2>&1 || snap install amazon-ssm-agent --classic || true
+  systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service >/dev/null 2>&1 || snap start amazon-ssm-agent || true
+fi
 
 rm -f /var/www/html/index.nginx-debian.html /usr/share/nginx/html/index.html /usr/share/nginx/html/index.nginx-debian.html || true
 FALLBACK_INDEX="/var/www/html/index.html"
@@ -68,10 +107,9 @@ EOF
 cp "$${FALLBACK_INDEX}" /var/www/html/index.nginx-debian.html
 
 systemctl enable nginx
-if [[ -n "$${EARLY_FALLBACK_PID}" ]]; then
-  echo "Stopping early HTTP fallback before starting Nginx."
-  kill "$${EARLY_FALLBACK_PID}" >/dev/null 2>&1 || true
-fi
+echo "Stopping early HTTP fallback before starting Nginx."
+systemctl stop frontend-fallback.service >/dev/null 2>&1 || true
+systemctl disable frontend-fallback.service >/dev/null 2>&1 || true
 systemctl restart nginx
 systemctl status nginx --no-pager || true
 
