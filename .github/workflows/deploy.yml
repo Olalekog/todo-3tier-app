@@ -471,16 +471,22 @@ jobs:
           FRONTEND_BODY=""
           for i in {1..30}; do
             FRONTEND_BODY="$(curl -fsS --connect-timeout 10 --max-time 15 "${FRONTEND_URL}" || true)"
-            if [[ -n "${FRONTEND_BODY}" ]]; then
+            if [[ -n "${FRONTEND_BODY}" && "${FRONTEND_BODY}" != *"Welcome to nginx"* && "${FRONTEND_BODY}" != *"Todo app is starting"* ]]; then
               FRONTEND_READY=true
               break
             fi
 
-            echo "Frontend HTTP check failed. Attempt ${i}/30; waiting 15s..."
+            if [[ "${FRONTEND_BODY}" == *"Welcome to nginx"* ]]; then
+              echo "Frontend is serving the stock Nginx page. Attempt ${i}/30; waiting 15s for user data to finish."
+            elif [[ "${FRONTEND_BODY}" == *"Todo app is starting"* ]]; then
+              echo "Frontend fallback page is reachable. Attempt ${i}/30; waiting 15s for the React container."
+            else
+              echo "Frontend HTTP check failed. Attempt ${i}/30; waiting 15s..."
+            fi
             sleep 15
           done
 
-          if [[ "${FRONTEND_READY}" == "true" && "${FRONTEND_BODY}" != *"Welcome to nginx"* && "${FRONTEND_BODY}" != *"Todo app is starting"* ]]; then
+          if [[ "${FRONTEND_READY}" == "true" ]]; then
             echo "Frontend HTTP check passed."
           else
             if [[ "${FRONTEND_READY}" == "true" ]]; then
