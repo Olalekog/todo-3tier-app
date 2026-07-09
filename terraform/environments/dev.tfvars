@@ -14,7 +14,7 @@ allowed_ssh_cidr  = "0.0.0.0/0"
 
 key_name = ""
 
-frontend_instance_type = "t3.medium"
+frontend_instance_type = "t2.medium"
 backend_instance_type  = "t2.micro"
 
 frontend_image_tag = "latest"
