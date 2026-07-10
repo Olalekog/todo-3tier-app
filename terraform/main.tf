@@ -73,6 +73,8 @@ module "database" {
 
   project_name          = var.project_name
   environment           = var.environment
+  name_suffix           = "app"
+  vpc_id                = module.network.vpc_id
   private_db_subnet_ids = module.network.private_db_subnet_ids
   db_security_group_id  = module.security_groups.database_security_group_id
   db_name               = var.db_name

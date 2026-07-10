@@ -1,15 +1,35 @@
+data "aws_subnet" "private_db" {
+  for_each = toset(var.private_db_subnet_ids)
+  id       = each.value
+}
+
+data "aws_security_group" "database" {
+  id = var.db_security_group_id
+}
+
+locals {
+  name_prefix = var.name_suffix == "" ? "${var.project_name}-${var.environment}" : "${var.project_name}-${var.environment}-${var.name_suffix}"
+}
+
 resource "aws_db_subnet_group" "this" {
-  name       = "${var.project_name}-${var.environment}-db-subnet-group"
+  name       = "${local.name_prefix}-db-subnet-group"
   subnet_ids = var.private_db_subnet_ids
 
+  lifecycle {
+    precondition {
+      condition     = alltrue([for subnet in data.aws_subnet.private_db : subnet.vpc_id == var.vpc_id])
+      error_message = "All database subnets must belong to the same VPC as the app infrastructure."
+    }
+  }
+
   tags = merge(var.tags, {
-    Name = "${var.project_name}-${var.environment}-db-subnet-group"
+    Name = "${local.name_prefix}-db-subnet-group"
     Tier = "database"
   })
 }
 
 resource "aws_iam_role" "rds_enhanced_monitoring" {
-  name = "${var.project_name}-${var.environment}-rds-enhanced-monitoring-role"
+  name = "${local.name_prefix}-rds-enhanced-monitoring-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -33,7 +53,7 @@ resource "aws_iam_role_policy_attachment" "rds_enhanced_monitoring" {
 }
 
 resource "aws_db_instance" "this" {
-  identifier             = "${var.project_name}-${var.environment}-mysql"
+  identifier             = "${local.name_prefix}-mysql"
   engine                 = "mysql"
   engine_version         = var.engine_version
   instance_class         = var.db_instance_class
@@ -61,6 +81,11 @@ resource "aws_db_instance" "this" {
   storage_encrypted = true
 
   lifecycle {
+    precondition {
+      condition     = data.aws_security_group.database.vpc_id == var.vpc_id
+      error_message = "The database security group must belong to the same VPC as the app infrastructure."
+    }
+
     # Avoid repeated no-op modify cycles caused by AWS-managed patching or
     # externally-rotated credentials when these are not intentional infra changes.
     ignore_changes = [
@@ -70,7 +95,7 @@ resource "aws_db_instance" "this" {
   }
 
   tags = merge(var.tags, {
-    Name = "${var.project_name}-${var.environment}-mysql"
+    Name = "${local.name_prefix}-mysql"
     Tier = "database"
   })
 }

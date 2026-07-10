@@ -8,6 +8,17 @@ variable "environment" {
   type        = string
 }
 
+variable "name_suffix" {
+  description = "Optional suffix added to database resource names."
+  type        = string
+  default     = ""
+}
+
+variable "vpc_id" {
+  description = "VPC ID that must contain the database subnets and security group."
+  type        = string
+}
+
 variable "private_db_subnet_ids" {
   description = "Private database subnet IDs for the DB subnet group."
   type        = list(string)
