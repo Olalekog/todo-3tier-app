@@ -285,12 +285,13 @@ jobs:
             -Dsonar.projectKey=${{ env.PROJECT_NAME }}-${{ needs.resolve_promotion.outputs.target_environment }}
             -Dsonar.qualitygate.wait=true
 
-      - name: Print SonarQube compute engine failure details
+      - name: Print SonarQube failure details
         if: failure()
         shell: bash
         env:
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: ${{ env.PROJECT_NAME }}-${{ needs.resolve_promotion.outputs.target_environment }}
         run: |
           set -euo pipefail
 
@@ -307,6 +308,9 @@ jobs:
 
           echo "SonarQube CE task: ${SONAR_HOST_URL%/}/api/ce/task?id=${CE_TASK_ID}"
           curl -fsS -u "${SONAR_TOKEN}:" "${SONAR_HOST_URL%/}/api/ce/task?id=${CE_TASK_ID}" | jq . || true
+
+          echo "SonarQube Quality Gate:"
+          curl -fsS -u "${SONAR_TOKEN}:" "${SONAR_HOST_URL%/}/api/qualitygates/project_status?projectKey=${SONAR_PROJECT_KEY}" | jq . || true
 
   checkov_scan:
     name: Checkov IaC Scan
