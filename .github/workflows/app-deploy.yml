@@ -51,6 +51,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  security-events: write
 
 concurrency:
   group: terraform-app-${{ github.event.inputs.target_environment || github.base_ref || github.ref_name }}
@@ -379,6 +380,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          mkdir -p checkov-reports
+
           docker run --rm \
             -v "${PWD}:/repo" \
             bridgecrew/checkov:latest \
@@ -386,7 +389,26 @@ jobs:
             --framework terraform \
             --skip-check CKV2_AWS_11 \
             --skip-path /repo/terraform/security-tools \
-            --quiet
+            --quiet \
+            -o cli \
+            -o sarif \
+            -o json \
+            --output-file-path /repo/checkov-reports
+
+      - name: Upload Checkov report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-iac-report-${{ needs.resolve_promotion.outputs.target_environment }}
+          path: checkov-reports/
+          if-no-files-found: warn
+
+      - name: Upload Checkov SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-reports/
+          category: checkov-iac-${{ needs.resolve_promotion.outputs.target_environment }}
 
   docker:
     name: Build, Test and Push Image
@@ -557,10 +579,50 @@ jobs:
             | docker login --username AWS --password-stdin "${{ needs.docker.outputs.registry }}"
 
       - name: Scan backend image
+        id: trivy_backend
         if: needs.detect_changes.outputs.build_backend == 'true'
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
+
+          mkdir -p trivy-reports
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.docker:/root/.docker:ro" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format table \
+            --output /repo/trivy-reports/backend-table.txt \
+            "${{ needs.docker.outputs.backend_image_uri }}"
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.docker:/root/.docker:ro" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format json \
+            --output /repo/trivy-reports/backend.json \
+            "${{ needs.docker.outputs.backend_image_uri }}"
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.docker:/root/.docker:ro" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format sarif \
+            --output /repo/trivy-reports/backend.sarif \
+            "${{ needs.docker.outputs.backend_image_uri }}"
 
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -573,10 +635,50 @@ jobs:
             "${{ needs.docker.outputs.backend_image_uri }}"
 
       - name: Scan frontend image
+        id: trivy_frontend
         if: needs.detect_changes.outputs.build_frontend == 'true'
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
+
+          mkdir -p trivy-reports
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.docker:/root/.docker:ro" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format table \
+            --output /repo/trivy-reports/frontend-table.txt \
+            "${{ needs.docker.outputs.frontend_image_uri }}"
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.docker:/root/.docker:ro" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format json \
+            --output /repo/trivy-reports/frontend.json \
+            "${{ needs.docker.outputs.frontend_image_uri }}"
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.docker:/root/.docker:ro" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format sarif \
+            --output /repo/trivy-reports/frontend.sarif \
+            "${{ needs.docker.outputs.frontend_image_uri }}"
 
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -587,6 +689,28 @@ jobs:
             --severity HIGH,CRITICAL \
             --ignore-unfixed \
             "${{ needs.docker.outputs.frontend_image_uri }}"
+
+      - name: Upload Trivy report
+        if: always() && (needs.detect_changes.outputs.build_frontend == 'true' || needs.detect_changes.outputs.build_backend == 'true')
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-report-${{ needs.resolve_promotion.outputs.target_environment }}
+          path: trivy-reports/
+          if-no-files-found: warn
+
+      - name: Upload Trivy SARIF
+        if: always() && (needs.detect_changes.outputs.build_frontend == 'true' || needs.detect_changes.outputs.build_backend == 'true')
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-reports/
+          category: trivy-image-${{ needs.resolve_promotion.outputs.target_environment }}
+
+      - name: Fail on Trivy findings
+        if: steps.trivy_backend.outcome == 'failure' || steps.trivy_frontend.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "Trivy found HIGH or CRITICAL vulnerabilities. Reports were uploaded before failing the job."
+          exit 1
 
   plan:
     name: Terraform Plan
