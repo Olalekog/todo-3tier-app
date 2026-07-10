@@ -12,6 +12,7 @@ on:
       - "terraform/modules/**"
       - "terraform/templates/user_data_frontend.sh.tftpl"
       - "terraform/templates/user_data_backend.sh.tftpl"
+      - "sonar-project.properties"
       - ".github/workflows/app-deploy.yml"
   workflow_dispatch:
     inputs:
@@ -44,6 +45,7 @@ on:
       - "terraform/modules/**"
       - "terraform/templates/user_data_frontend.sh.tftpl"
       - "terraform/templates/user_data_backend.sh.tftpl"
+      - "sonar-project.properties"
       - ".github/workflows/app-deploy.yml"
 
 permissions:
@@ -177,6 +179,8 @@ jobs:
               - "backend/**"
               - "terraform/templates/user_data_frontend.sh.tftpl"
               - "terraform/templates/user_data_backend.sh.tftpl"
+            sonarqube_config:
+              - "sonar-project.properties"
             shared_infra:
               - "terraform/*.tf"
               - "terraform/modules/**"
@@ -201,7 +205,7 @@ jobs:
           RUN_SONARQUBE=false
           RUN_CHECKOV=false
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.app }}" == "true" || "${{ steps.filters.outputs.shared_infra }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.app }}" == "true" || "${{ steps.filters.outputs.sonarqube_config }}" == "true" || "${{ steps.filters.outputs.shared_infra }}" == "true" ]]; then
             RUN_ENVIRONMENT=true
           elif [[ "${TARGET_ENVIRONMENT}" == "dev" && "${{ steps.filters.outputs.dev_config }}" == "true" ]]; then
             RUN_ENVIRONMENT=true
@@ -219,7 +223,7 @@ jobs:
             BUILD_BACKEND=true
           fi
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.frontend }}" == "true" || "${{ steps.filters.outputs.backend }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.frontend }}" == "true" || "${{ steps.filters.outputs.backend }}" == "true" || "${{ steps.filters.outputs.sonarqube_config }}" == "true" ]]; then
             RUN_SONARQUBE=true
           fi
 
