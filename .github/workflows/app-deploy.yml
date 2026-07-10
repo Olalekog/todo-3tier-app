@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - dev
-      - uat
     paths:
       - "frontend/**"
       - "backend/**"
@@ -88,10 +87,13 @@ jobs:
             ACTION="${{ github.event.inputs.action }}"
             SOURCE_BRANCH="${GITHUB_REF_NAME}"
             TARGET_ENVIRONMENT="${{ github.event.inputs.target_environment }}"
-          else
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
             ACTION="apply"
             SOURCE_BRANCH="${GITHUB_REF_NAME}"
             TARGET_ENVIRONMENT="${GITHUB_REF_NAME}"
+          else
+            echo "Unsupported event: ${{ github.event_name }}"
+            exit 1
           fi
 
           case "${TARGET_ENVIRONMENT}" in
@@ -113,10 +115,8 @@ jobs:
                   exit 1
                 fi
               else
-                if [[ "${SOURCE_BRANCH}" != "uat" ]]; then
-                  echo "UAT push deployments must run from the uat branch."
-                  exit 1
-                fi
+                echo "UAT deployments are not allowed from push. Use a dev-to-uat pull request or manual dispatch from dev."
+                exit 1
               fi
               ;;
             prod)
@@ -145,6 +145,8 @@ jobs:
           echo "target_environment=${TARGET_ENVIRONMENT}" >> "$GITHUB_OUTPUT"
           echo "state_key=${PROJECT_NAME}/${TARGET_ENVIRONMENT}/app/terraform.tfstate" >> "$GITHUB_OUTPUT"
           echo "tfvars_file=environments/${TARGET_ENVIRONMENT}.tfvars" >> "$GITHUB_OUTPUT"
+
+          echo "Resolved app deployment: event=${{ github.event_name }}, source=${SOURCE_BRANCH}, target=${TARGET_ENVIRONMENT}, action=${ACTION}"
 
   detect_changes:
     name: Detect Changes
@@ -800,7 +802,7 @@ jobs:
     needs:
       - resolve_promotion
       - plan
-    if: needs.resolve_promotion.outputs.action == 'apply' && needs.plan.result == 'success'
+    if: always() && needs.resolve_promotion.outputs.action == 'apply' && needs.plan.result == 'success'
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
       STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
