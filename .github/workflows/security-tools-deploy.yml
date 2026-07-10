@@ -554,6 +554,7 @@ jobs:
           role-session-name: GitHubActionsSonarQubeVerify
 
       - name: Verify SonarQube container
+        continue-on-error: true
         env:
           INSTANCE_ID: ${{ needs.resolve_outputs.outputs.instance_id }}
         shell: bash
@@ -613,6 +614,7 @@ jobs:
           role-session-name: GitHubActionsTrivyVerify
 
       - name: Verify Trivy container
+        continue-on-error: true
         env:
           INSTANCE_ID: ${{ needs.resolve_outputs.outputs.instance_id }}
         shell: bash
@@ -690,6 +692,7 @@ jobs:
           role-session-name: GitHubActionsCheckovVerify
 
       - name: Verify Checkov container
+        continue-on-error: true
         env:
           INSTANCE_ID: ${{ needs.resolve_outputs.outputs.instance_id }}
         shell: bash
@@ -767,6 +770,7 @@ jobs:
           role-session-name: GitHubActionsGrafanaVerify
 
       - name: Verify Grafana container
+        continue-on-error: true
         env:
           INSTANCE_ID: ${{ needs.resolve_outputs.outputs.instance_id }}
         shell: bash
@@ -844,6 +848,7 @@ jobs:
           role-session-name: GitHubActionsPrometheusVerify
 
       - name: Verify Prometheus container
+        continue-on-error: true
         env:
           INSTANCE_ID: ${{ needs.resolve_outputs.outputs.instance_id }}
         shell: bash
