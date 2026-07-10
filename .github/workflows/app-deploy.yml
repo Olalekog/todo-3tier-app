@@ -752,7 +752,7 @@ jobs:
     needs:
       - resolve_promotion
       - apply
-    if: needs.apply.result == 'success'
+    if: always() && needs.resolve_promotion.outputs.action == 'apply' && needs.apply.result == 'success'
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
       STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
