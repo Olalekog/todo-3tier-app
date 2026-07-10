@@ -375,7 +375,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run Checkov scan
+      - name: Generate Checkov reports
         shell: bash
         run: |
           set -euo pipefail
@@ -393,7 +393,25 @@ jobs:
             -o cli \
             -o sarif \
             -o json \
-            --output-file-path /repo/checkov-reports
+            --output-file-path /repo/checkov-reports \
+            --soft-fail
+
+          find checkov-reports -maxdepth 2 -type f -print
+
+      - name: Resolve Checkov SARIF
+        id: checkov_sarif
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SARIF_FILE="$(find checkov-reports -type f \( -name '*.sarif' -o -name '*.sarif.json' \) | head -n 1 || true)"
+          if [[ -z "${SARIF_FILE}" ]]; then
+            echo "::warning::No Checkov SARIF file was found in checkov-reports."
+          else
+            echo "Found Checkov SARIF: ${SARIF_FILE}"
+          fi
+
+          echo "sarif_file=${SARIF_FILE}" >> "$GITHUB_OUTPUT"
 
       - name: Upload Checkov report
         if: always()
@@ -404,11 +422,25 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Checkov SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        if: always() && steps.checkov_sarif.outputs.sarif_file != ''
+        uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: checkov-reports/
+          sarif_file: ${{ steps.checkov_sarif.outputs.sarif_file }}
           category: checkov-iac-${{ needs.resolve_promotion.outputs.target_environment }}
+
+      - name: Run Checkov gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            bridgecrew/checkov:latest \
+            -d /repo/terraform \
+            --framework terraform \
+            --skip-check CKV2_AWS_11 \
+            --skip-path /repo/terraform/security-tools \
+            --quiet
 
   docker:
     name: Build, Test and Push Image
@@ -698,12 +730,19 @@ jobs:
           path: trivy-reports/
           if-no-files-found: warn
 
-      - name: Upload Trivy SARIF
-        if: always() && (needs.detect_changes.outputs.build_frontend == 'true' || needs.detect_changes.outputs.build_backend == 'true')
-        uses: github/codeql-action/upload-sarif@v3
+      - name: Upload backend Trivy SARIF
+        if: always() && needs.detect_changes.outputs.build_backend == 'true'
+        uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: trivy-reports/
-          category: trivy-image-${{ needs.resolve_promotion.outputs.target_environment }}
+          sarif_file: trivy-reports/backend.sarif
+          category: trivy-backend-image-${{ needs.resolve_promotion.outputs.target_environment }}
+
+      - name: Upload frontend Trivy SARIF
+        if: always() && needs.detect_changes.outputs.build_frontend == 'true'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-reports/frontend.sarif
+          category: trivy-frontend-image-${{ needs.resolve_promotion.outputs.target_environment }}
 
       - name: Fail on Trivy findings
         if: steps.trivy_backend.outcome == 'failure' || steps.trivy_frontend.outcome == 'failure'
