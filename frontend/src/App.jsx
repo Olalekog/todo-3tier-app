@@ -126,7 +126,7 @@ function App() {
       setTitle('');
       await loadTodos();
     } catch (err) {
-      setError(`Failed to add todo. ${err.message}`);
+      setError(`Failed to add the todo. ${err.message}`);
     } finally {
       setSaving(false);
     }
@@ -143,7 +143,7 @@ function App() {
 
       await loadTodos();
     } catch (err) {
-      setError(`Failed to update todo. ${err.message}`);
+      setError(`Failed to update the todo. ${err.message}`);
     }
   }
 
@@ -157,7 +157,7 @@ function App() {
 
       await loadTodos();
     } catch (err) {
-      setError(`Failed to delete todo. ${err.message}`);
+      setError(`Failed to delete the todo. ${err.message}`);
     }
   }
 

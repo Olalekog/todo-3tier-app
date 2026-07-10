@@ -302,7 +302,7 @@ jobs:
           fi
 
           echo "SonarQube CE task: ${SONAR_HOST_URL%/}/api/ce/task?id=${CE_TASK_ID}"
-          curl -fsS -u "${SONAR_TOKEN}:" "${SONAR_HOST_URL%/}/api/ce/task?id=${CE_TASK_ID}" | jq .
+          curl -fsS -u "${SONAR_TOKEN}:" "${SONAR_HOST_URL%/}/api/ce/task?id=${CE_TASK_ID}" | jq . || true
 
   checkov_scan:
     name: Checkov IaC Scan
