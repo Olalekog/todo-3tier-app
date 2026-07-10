@@ -119,7 +119,10 @@ def health():
         ensure_db_initialized()
         return {"status": "ok", "database": "ok"}
     except HTTPException as exc:
-        return {"status": "degraded", "database": exc.detail}
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "degraded", "database": exc.detail},
+        )
 
 
 @app.post("/seed")

@@ -95,7 +95,7 @@ module "backend_compute" {
   key_name                    = var.key_name == "" ? null : var.key_name
   subnet_id                   = module.network.private_app_subnet_ids[0]
   security_group_id           = module.security_groups.backend_security_group_id
-  associate_public_ip_address = true
+  associate_public_ip_address = false
 
   image_uri               = local.backend_image_uri
   user_data_template_path = "${path.module}/templates/user_data_backend.sh.tftpl"

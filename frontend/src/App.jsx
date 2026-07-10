@@ -170,7 +170,7 @@ function App() {
       <section className="card">
         <h1>3-Tier To-Do App</h1>
         <p className="subtitle">
-          React frontend → private FastAPI backend → private RDS MySQL
+          React frontend - private FastAPI backend - private RDS MySQL
         </p>
 
         <form onSubmit={addTodo} className="todo-form">
