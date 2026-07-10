@@ -178,23 +178,23 @@ jobs:
           RUN_GRAFANA=false
           RUN_PROMETHEUS=false
 
-          if [[ "${{ steps.filters.outputs.sonarqube }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.sonarqube }}" == "true" ]]; then
             RUN_SONARQUBE=true
           fi
 
-          if [[ "${{ steps.filters.outputs.trivy }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.trivy }}" == "true" ]]; then
             RUN_TRIVY=true
           fi
 
-          if [[ "${{ steps.filters.outputs.checkov }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.checkov }}" == "true" ]]; then
             RUN_CHECKOV=true
           fi
 
-          if [[ "${{ steps.filters.outputs.grafana }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.grafana }}" == "true" ]]; then
             RUN_GRAFANA=true
           fi
 
-          if [[ "${{ steps.filters.outputs.prometheus }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.prometheus }}" == "true" ]]; then
             RUN_PROMETHEUS=true
           fi
 

@@ -211,11 +211,11 @@ jobs:
             RUN_ENVIRONMENT=true
           fi
 
-          if [[ "${{ steps.filters.outputs.frontend }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.frontend }}" == "true" ]]; then
             BUILD_FRONTEND=true
           fi
 
-          if [[ "${{ steps.filters.outputs.backend }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.backend }}" == "true" ]]; then
             BUILD_BACKEND=true
           fi
 
