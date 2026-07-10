@@ -169,11 +169,18 @@ jobs:
         with:
           filters: |
             frontend:
-              - "frontend/**"
-              - "terraform/templates/user_data_frontend.sh.tftpl"
+              - "frontend/src/**"
+              - "frontend/nginx/**"
+              - "frontend/index.html"
+              - "frontend/package.json"
+              - "frontend/package-lock.json"
+              - "frontend/Dockerfile"
+              - "frontend/.dockerignore"
             backend:
-              - "backend/**"
-              - "terraform/templates/user_data_backend.sh.tftpl"
+              - "backend/main.py"
+              - "backend/requirements.txt"
+              - "backend/Dockerfile"
+              - "backend/.dockerignore"
             app:
               - "frontend/**"
               - "backend/**"
@@ -213,11 +220,11 @@ jobs:
             RUN_ENVIRONMENT=true
           fi
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.frontend }}" == "true" ]]; then
+          if [[ "${{ steps.filters.outputs.frontend }}" == "true" ]]; then
             BUILD_FRONTEND=true
           fi
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.backend }}" == "true" ]]; then
+          if [[ "${{ steps.filters.outputs.backend }}" == "true" ]]; then
             BUILD_BACKEND=true
           fi
 
@@ -500,7 +507,7 @@ jobs:
             | docker login --username AWS --password-stdin "${{ needs.docker.outputs.registry }}"
 
       - name: Scan backend image
-        if: needs.detect_changes.outputs.build_backend == 'true' || github.event_name == 'workflow_dispatch'
+        if: needs.detect_changes.outputs.build_backend == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -516,7 +523,7 @@ jobs:
             "${{ needs.docker.outputs.backend_image_uri }}"
 
       - name: Scan frontend image
-        if: needs.detect_changes.outputs.build_frontend == 'true' || github.event_name == 'workflow_dispatch'
+        if: needs.detect_changes.outputs.build_frontend == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -539,7 +546,7 @@ jobs:
       - detect_changes
       - docker
       - trivy_scan
-    if: always() && needs.detect_changes.outputs.run_environment == 'true' && (needs.resolve_promotion.outputs.action != 'apply' || (needs.docker.result == 'success' && needs.trivy_scan.result == 'success'))
+    if: always() && needs.detect_changes.outputs.run_environment == 'true' && (needs.resolve_promotion.outputs.action != 'apply' || (needs.docker.result == 'success' && (needs.trivy_scan.result == 'success' || needs.trivy_scan.result == 'skipped')))
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
       STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
@@ -754,7 +761,7 @@ jobs:
       - detect_changes
       - docker
       - apply
-    if: always() && needs.resolve_promotion.outputs.action == 'apply' && needs.apply.result == 'success' && (needs.detect_changes.outputs.build_frontend == 'true' || needs.detect_changes.outputs.build_backend == 'true' || github.event_name == 'workflow_dispatch')
+    if: always() && needs.resolve_promotion.outputs.action == 'apply' && needs.apply.result == 'success' && (needs.detect_changes.outputs.build_frontend == 'true' || needs.detect_changes.outputs.build_backend == 'true')
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
       STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
@@ -854,7 +861,7 @@ jobs:
             return 1
           }
 
-          if [[ "${BUILD_BACKEND}" == "true" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "${BUILD_BACKEND}" == "true" ]]; then
             backend_command="$(cat <<SCRIPT
           set -eu
           AWS_REGION="${AWS_REGION}"
@@ -874,7 +881,7 @@ jobs:
             send_and_wait "${BACKEND_INSTANCE_ID}" "Deploy backend container" "${backend_command}"
           fi
 
-          if [[ "${BUILD_FRONTEND}" == "true" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "${BUILD_FRONTEND}" == "true" ]]; then
             frontend_command="$(cat <<SCRIPT
           set -eu
           AWS_REGION="${AWS_REGION}"
