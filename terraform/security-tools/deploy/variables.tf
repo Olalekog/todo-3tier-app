@@ -52,6 +52,12 @@ variable "sonarqube_instance_type" {
   default     = "t3.medium"
 }
 
+variable "sonarqube_root_volume_size" {
+  description = "Root EBS volume size in GiB for the security tools EC2 instance."
+  type        = number
+  default     = 40
+}
+
 variable "sonarqube_version" {
   description = "Legacy SonarQube version value. Prefer sonarqube_image for the container deployment."
   type        = string

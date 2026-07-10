@@ -111,8 +111,13 @@ docker run -d \
   --restart unless-stopped \
   --network security-tools \
   -p 9000:9000 \
+  -e SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true \
+  -e SONAR_WEB_JAVAOPTS="-Xms512m -Xmx768m" \
+  -e SONAR_CE_JAVAOPTS="-Xms512m -Xmx768m" \
+  -e SONAR_SEARCH_JAVAOPTS="-Xms1g -Xmx1g" \
   --ulimit nofile=131072:131072 \
   --ulimit nproc=8192:8192 \
+  --ulimit memlock=-1:-1 \
   -v "$${TOOLS_HOME}/sonarqube/data:/opt/sonarqube/data" \
   -v "$${TOOLS_HOME}/sonarqube/extensions:/opt/sonarqube/extensions" \
   -v "$${TOOLS_HOME}/sonarqube/logs:/opt/sonarqube/logs" \

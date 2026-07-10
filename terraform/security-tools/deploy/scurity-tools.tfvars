@@ -1,6 +1,6 @@
 # Shared security tools infrastructure settings.
 enable_sonarqube        = true
-sonarqube_instance_type = "t3.medium"
+sonarqube_instance_type = "t3.large"
 
 # Security tools are deployed as containers on the same EC2 instance.
 sonarqube_image = "sonarqube:community"

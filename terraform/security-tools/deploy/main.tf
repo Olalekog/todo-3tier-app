@@ -80,6 +80,7 @@ module "sonarqube_compute" {
   aws_region                  = var.aws_region
   ami_id                      = local.sonarqube_ami_id
   instance_type               = var.sonarqube_instance_type
+  root_volume_size            = var.sonarqube_root_volume_size
   key_name                    = var.key_name == "" ? null : var.key_name
   subnet_id                   = var.sonarqube_subnet_id
   security_group_id           = module.security_groups.sonarqube_security_group_id

@@ -94,6 +94,7 @@ resource "aws_instance" "this" {
   root_block_device {
     encrypted   = true
     volume_type = "gp3"
+    volume_size = var.root_volume_size
   }
 
   user_data                   = local.rendered_user_data
