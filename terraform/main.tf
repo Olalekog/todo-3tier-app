@@ -19,6 +19,40 @@ data "aws_ami" "ubuntu" {
   }
 }
 
+data "aws_instances" "existing_backend" {
+  filter {
+    name   = "tag:Name"
+    values = ["${var.project_name}-${var.environment}-backend"]
+  }
+
+  filter {
+    name   = "instance-state-name"
+    values = ["pending", "running", "stopping", "stopped"]
+  }
+}
+
+data "aws_instance" "existing_backend" {
+  count       = length(data.aws_instances.existing_backend.ids) > 0 ? 1 : 0
+  instance_id = sort(data.aws_instances.existing_backend.ids)[0]
+}
+
+data "aws_instances" "existing_frontend" {
+  filter {
+    name   = "tag:Name"
+    values = ["${var.project_name}-${var.environment}-frontend"]
+  }
+
+  filter {
+    name   = "instance-state-name"
+    values = ["pending", "running", "stopping", "stopped"]
+  }
+}
+
+data "aws_instance" "existing_frontend" {
+  count       = length(data.aws_instances.existing_frontend.ids) > 0 ? 1 : 0
+  instance_id = sort(data.aws_instances.existing_frontend.ids)[0]
+}
+
 locals {
   name_prefix  = "${var.project_name}-${var.environment}"
   ecr_registry = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
@@ -27,6 +61,9 @@ locals {
   backend_image_uri  = "${module.ecr.backend_repository_url}:${var.backend_image_tag}"
 
   azs = slice(data.aws_availability_zones.available.names, 0, var.az_count)
+
+  backend_ami_id  = length(data.aws_instance.existing_backend) > 0 ? data.aws_instance.existing_backend[0].ami : data.aws_ami.ubuntu.id
+  frontend_ami_id = length(data.aws_instance.existing_frontend) > 0 ? data.aws_instance.existing_frontend[0].ami : data.aws_ami.ubuntu.id
 
   common_tags = merge(var.tags, {
     Project     = var.project_name
@@ -94,7 +131,7 @@ module "backend_compute" {
   environment                 = var.environment
   workload_name               = "backend"
   aws_region                  = var.aws_region
-  ami_id                      = data.aws_ami.ubuntu.id
+  ami_id                      = local.backend_ami_id
   instance_type               = var.backend_instance_type
   key_name                    = var.key_name == "" ? null : var.key_name
   subnet_id                   = module.network.private_app_subnet_ids[0]
@@ -120,7 +157,7 @@ module "frontend_compute" {
   environment                 = var.environment
   workload_name               = "frontend"
   aws_region                  = var.aws_region
-  ami_id                      = data.aws_ami.ubuntu.id
+  ami_id                      = local.frontend_ami_id
   instance_type               = var.frontend_instance_type
   key_name                    = var.key_name == "" ? null : var.key_name
   subnet_id                   = module.network.public_subnet_ids[0]

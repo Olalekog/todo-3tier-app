@@ -34,7 +34,7 @@ data "aws_instances" "existing_sonarqube" {
 
 data "aws_instance" "existing_sonarqube" {
   count       = var.enable_sonarqube && length(data.aws_instances.existing_sonarqube[0].ids) > 0 ? 1 : 0
-  instance_id = data.aws_instances.existing_sonarqube[0].ids[0]
+  instance_id = sort(data.aws_instances.existing_sonarqube[0].ids)[0]
 }
 
 locals {
