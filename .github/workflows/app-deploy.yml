@@ -22,6 +22,7 @@ on:
         options:
           - plan
           - apply
+          - destroy
         default: apply
 
 permissions:
@@ -225,7 +226,7 @@ jobs:
     needs:
       - ecr
       - docker
-    if: always() && needs.ecr.result == 'success' && (github.event_name == 'workflow_dispatch' || needs.docker.result == 'success')
+    if: always() && needs.ecr.result == 'success' && github.event.inputs.action != 'destroy' && (github.event_name == 'workflow_dispatch' || needs.docker.result == 'success')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -261,15 +262,30 @@ jobs:
         run: |
           set -euo pipefail
 
-          DB_SUBNET_GROUP="${PROJECT_NAME}-${ENVIRONMENT}-db-subnet-group"
-          DB_MONITORING_ROLE="${PROJECT_NAME}-${ENVIRONMENT}-rds-enhanced-monitoring-role"
-          DB_IDENTIFIER="${PROJECT_NAME}-${ENVIRONMENT}-mysql"
+          DB_NAME_PREFIX="${PROJECT_NAME}-${ENVIRONMENT}-app"
+          DB_SUBNET_GROUP="${DB_NAME_PREFIX}-db-subnet-group"
+          DB_MONITORING_ROLE="${DB_NAME_PREFIX}-rds-enhanced-monitoring-role"
+          DB_IDENTIFIER="${DB_NAME_PREFIX}-mysql"
           RDS_MONITORING_POLICY_ARN="arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
           TF_VARS=(
             -var-file="${TFVARS_FILE}"
             -var="frontend_image_tag=${IMAGE_TAG}"
             -var="backend_image_tag=${IMAGE_TAG}"
           )
+
+          forget_if_mismatched() {
+            local address="$1"
+            local expected_id="$2"
+            local current_id
+
+            current_id="$(terraform state show -no-color "${address}" 2>/dev/null \
+              | awk -F'= ' '/^[[:space:]]*id[[:space:]]*=/{print $2; exit}' || true)"
+
+            if [[ -n "${current_id}" && "${current_id}" != "${expected_id}" ]]; then
+              echo "Removing mismatched state for ${address}: expected ${expected_id}, found ${current_id}."
+              terraform state rm "${address}"
+            fi
+          }
 
           import_if_exists() {
             local address="$1"
@@ -288,6 +304,11 @@ jobs:
               echo "Resource ${id} does not exist yet."
             fi
           }
+
+          forget_if_mismatched "module.database.aws_db_subnet_group.this" "${DB_SUBNET_GROUP}"
+          forget_if_mismatched "module.database.aws_iam_role.rds_enhanced_monitoring" "${DB_MONITORING_ROLE}"
+          forget_if_mismatched "module.database.aws_iam_role_policy_attachment.rds_enhanced_monitoring" "${DB_MONITORING_ROLE}/${RDS_MONITORING_POLICY_ARN}"
+          forget_if_mismatched "module.database.aws_db_instance.this" "${DB_IDENTIFIER}"
 
           import_if_exists \
             "module.database.aws_db_subnet_group.this" \
@@ -387,6 +408,52 @@ jobs:
         working-directory: terraform
         shell: bash
         run: terraform apply -auto-approve app.tfplan
+
+  destroy:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+    needs:
+      - ecr
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsAppDestroy
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Destroy app infrastructure
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform destroy -auto-approve \
+            -var-file="${TFVARS_FILE}" \
+            -var="frontend_image_tag=${IMAGE_TAG}" \
+            -var="backend_image_tag=${IMAGE_TAG}"
 
   verify:
     name: Verify App

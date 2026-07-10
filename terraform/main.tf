@@ -82,6 +82,7 @@ module "database" {
   db_password           = var.db_password
   db_instance_class     = var.db_instance_class
   allocated_storage     = var.db_allocated_storage
+  deletion_protection   = var.db_deletion_protection
   tags                  = local.common_tags
 }
 

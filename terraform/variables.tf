@@ -107,6 +107,12 @@ variable "db_allocated_storage" {
   default     = 20
 }
 
+variable "db_deletion_protection" {
+  description = "Enable deletion protection for the RDS instance."
+  type        = bool
+  default     = true
+}
+
 variable "frontend_image_tag" {
   description = "Frontend Docker image tag."
   type        = string

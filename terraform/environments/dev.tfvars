@@ -20,10 +20,11 @@ backend_instance_type  = "t2.micro"
 frontend_image_tag = "latest"
 backend_image_tag  = "latest"
 
-db_name              = "todoapp"
-db_username          = "todo_admin"
-db_instance_class    = "db.t3.micro"
-db_allocated_storage = 20
+db_name                = "todoapp"
+db_username            = "todo_admin"
+db_instance_class      = "db.t3.micro"
+db_allocated_storage   = 20
+db_deletion_protection = false
 
 tags = {
   Owner       = "Olalekan"
