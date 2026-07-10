@@ -856,7 +856,7 @@ jobs:
 
           if [[ "${BUILD_BACKEND}" == "true" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             backend_command="$(cat <<SCRIPT
-          set -euo pipefail
+          set -eu
           AWS_REGION="${AWS_REGION}"
           IMAGE_URI="${BACKEND_IMAGE_URI}"
           DB_HOST="${DB_HOST}"
@@ -876,7 +876,7 @@ jobs:
 
           if [[ "${BUILD_FRONTEND}" == "true" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             frontend_command="$(cat <<SCRIPT
-          set -euo pipefail
+          set -eu
           AWS_REGION="${AWS_REGION}"
           IMAGE_URI="${FRONTEND_IMAGE_URI}"
           BACKEND_HOST="${BACKEND_PRIVATE_IP}"
