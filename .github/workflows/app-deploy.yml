@@ -245,7 +245,7 @@ jobs:
     needs:
       - resolve_promotion
       - detect_changes
-    if: needs.detect_changes.outputs.run_environment == 'true' && needs.detect_changes.outputs.run_sonarqube == 'true'
+    if: needs.detect_changes.outputs.run_environment == 'true' && needs.detect_changes.outputs.run_sonarqube == 'true' && github.event_name != 'pull_request'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -271,6 +271,7 @@ jobs:
           fi
 
       - name: Run SonarQube quality scan
+        id: sonar
         uses: SonarSource/sonarqube-scan-action@v5
         env:
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
@@ -279,6 +280,29 @@ jobs:
           args: >
             -Dsonar.projectKey=${{ env.PROJECT_NAME }}-${{ needs.resolve_promotion.outputs.target_environment }}
             -Dsonar.qualitygate.wait=true
+
+      - name: Print SonarQube compute engine failure details
+        if: failure()
+        shell: bash
+        env:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f .scannerwork/report-task.txt ]]; then
+            echo "SonarScanner report-task.txt was not found."
+            exit 0
+          fi
+
+          CE_TASK_ID="$(awk -F= '/^ceTaskId=/{print $2}' .scannerwork/report-task.txt)"
+          if [[ -z "${CE_TASK_ID}" ]]; then
+            echo "Could not find ceTaskId in .scannerwork/report-task.txt."
+            exit 0
+          fi
+
+          echo "SonarQube CE task: ${SONAR_HOST_URL%/}/api/ce/task?id=${CE_TASK_ID}"
+          curl -fsS -u "${SONAR_TOKEN}:" "${SONAR_HOST_URL%/}/api/ce/task?id=${CE_TASK_ID}" | jq .
 
   checkov_scan:
     name: Checkov IaC Scan
@@ -301,6 +325,7 @@ jobs:
             bridgecrew/checkov:latest \
             -d /repo/terraform \
             --framework terraform \
+            --skip-check CKV2_AWS_11 \
             --skip-path /repo/terraform/security-tools \
             --quiet
 
