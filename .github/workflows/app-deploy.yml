@@ -255,6 +255,74 @@ jobs:
             -backend-config="region=${AWS_REGION}" \
             -backend-config="encrypt=true"
 
+      - name: Import existing database resources
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DB_SUBNET_GROUP="${PROJECT_NAME}-${ENVIRONMENT}-db-subnet-group"
+          DB_MONITORING_ROLE="${PROJECT_NAME}-${ENVIRONMENT}-rds-enhanced-monitoring-role"
+          DB_IDENTIFIER="${PROJECT_NAME}-${ENVIRONMENT}-mysql"
+          RDS_MONITORING_POLICY_ARN="arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
+          TF_VARS=(
+            -var-file="${TFVARS_FILE}"
+            -var="frontend_image_tag=${IMAGE_TAG}"
+            -var="backend_image_tag=${IMAGE_TAG}"
+          )
+
+          import_if_exists() {
+            local address="$1"
+            local id="$2"
+            shift 2
+
+            if terraform state show "${address}" >/dev/null 2>&1; then
+              echo "${address} is already managed by Terraform."
+              return
+            fi
+
+            if "$@" >/dev/null 2>&1; then
+              echo "Importing existing resource ${id} into ${address}."
+              terraform import "${TF_VARS[@]}" "${address}" "${id}"
+            else
+              echo "Resource ${id} does not exist yet."
+            fi
+          }
+
+          import_if_exists \
+            "module.database.aws_db_subnet_group.this" \
+            "${DB_SUBNET_GROUP}" \
+            aws rds describe-db-subnet-groups \
+              --region "${AWS_REGION}" \
+              --db-subnet-group-name "${DB_SUBNET_GROUP}"
+
+          import_if_exists \
+            "module.database.aws_iam_role.rds_enhanced_monitoring" \
+            "${DB_MONITORING_ROLE}" \
+            aws iam get-role \
+              --role-name "${DB_MONITORING_ROLE}"
+
+          if terraform state show "module.database.aws_iam_role_policy_attachment.rds_enhanced_monitoring" >/dev/null 2>&1; then
+            echo "module.database.aws_iam_role_policy_attachment.rds_enhanced_monitoring is already managed by Terraform."
+          elif [[ "$(aws iam list-attached-role-policies \
+              --role-name "${DB_MONITORING_ROLE}" \
+              --query "contains(AttachedPolicies[].PolicyArn, '${RDS_MONITORING_POLICY_ARN}')" \
+              --output text 2>/dev/null || true)" == "True" ]]; then
+            echo "Importing existing resource ${DB_MONITORING_ROLE}/${RDS_MONITORING_POLICY_ARN} into module.database.aws_iam_role_policy_attachment.rds_enhanced_monitoring."
+            terraform import "${TF_VARS[@]}" \
+              "module.database.aws_iam_role_policy_attachment.rds_enhanced_monitoring" \
+              "${DB_MONITORING_ROLE}/${RDS_MONITORING_POLICY_ARN}"
+          else
+            echo "Resource ${DB_MONITORING_ROLE}/${RDS_MONITORING_POLICY_ARN} does not exist yet."
+          fi
+
+          import_if_exists \
+            "module.database.aws_db_instance.this" \
+            "${DB_IDENTIFIER}" \
+            aws rds describe-db-instances \
+              --region "${AWS_REGION}" \
+              --db-instance-identifier "${DB_IDENTIFIER}"
+
       - name: Terraform plan
         working-directory: terraform
         shell: bash
