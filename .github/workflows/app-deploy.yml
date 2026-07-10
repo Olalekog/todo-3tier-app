@@ -331,8 +331,8 @@ jobs:
             --skip-path /repo/terraform/security-tools \
             --quiet
 
-  ecr:
-    name: Resolve ECR
+  docker:
+    name: Build, Test and Push Image
     runs-on: ubuntu-latest
     needs:
       - resolve_promotion
@@ -340,22 +340,29 @@ jobs:
       - sonarqube_scan
       - checkov_scan
       - prod_approval
-    if: always() && needs.detect_changes.outputs.run_environment == 'true' && (needs.sonarqube_scan.result == 'success' || needs.sonarqube_scan.result == 'skipped') && (needs.checkov_scan.result == 'success' || needs.checkov_scan.result == 'skipped') && (needs.resolve_promotion.outputs.action != 'apply' || needs.resolve_promotion.outputs.target_environment != 'prod' || needs.prod_approval.result == 'success')
+    if: always() && needs.detect_changes.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && (needs.sonarqube_scan.result == 'success' || needs.sonarqube_scan.result == 'skipped') && (needs.checkov_scan.result == 'success' || needs.checkov_scan.result == 'skipped') && (needs.resolve_promotion.outputs.target_environment != 'prod' || needs.prod_approval.result == 'success')
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
     outputs:
+      registry: ${{ steps.repos.outputs.registry }}
       frontend_repository: ${{ steps.repos.outputs.frontend_repository }}
       backend_repository: ${{ steps.repos.outputs.backend_repository }}
-      registry: ${{ steps.repos.outputs.registry }}
+      frontend_image_tag: ${{ steps.tags.outputs.frontend_image_tag }}
+      backend_image_tag: ${{ steps.tags.outputs.backend_image_tag }}
+      frontend_image_uri: ${{ steps.tags.outputs.frontend_image_uri }}
+      backend_image_uri: ${{ steps.tags.outputs.backend_image_uri }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActionsAppEcr
+          role-session-name: GitHubActionsAppDocker
 
-      - name: Resolve existing repository names
+      - name: Resolve existing ECR repositories
         id: repos
         shell: bash
         run: |
@@ -383,38 +390,12 @@ jobs:
           echo "frontend_repository=${FRONTEND_REPOSITORY}" >> "$GITHUB_OUTPUT"
           echo "backend_repository=${BACKEND_REPOSITORY}" >> "$GITHUB_OUTPUT"
 
-  docker:
-    name: Build & Test Image
-    runs-on: ubuntu-latest
-    needs:
-      - resolve_promotion
-      - detect_changes
-      - ecr
-    if: always() && needs.detect_changes.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && needs.ecr.result == 'success'
-    env:
-      ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
-    outputs:
-      frontend_image_tag: ${{ steps.tags.outputs.frontend_image_tag }}
-      backend_image_tag: ${{ steps.tags.outputs.backend_image_tag }}
-      frontend_image_uri: ${{ steps.tags.outputs.frontend_image_uri }}
-      backend_image_uri: ${{ steps.tags.outputs.backend_image_uri }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: GitHubActionsAppDocker
-
       - name: Login to ECR
         shell: bash
         run: |
           set -euo pipefail
           aws ecr get-login-password --region "${AWS_REGION}" \
-            | docker login --username AWS --password-stdin "${{ needs.ecr.outputs.registry }}"
+            | docker login --username AWS --password-stdin "${{ steps.repos.outputs.registry }}"
 
       - name: Build and push backend
         if: needs.detect_changes.outputs.build_backend == 'true'
@@ -422,10 +403,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          IMAGE_URI="${{ needs.ecr.outputs.registry }}/${{ needs.ecr.outputs.backend_repository }}:${IMAGE_TAG}"
+          IMAGE_URI="${{ steps.repos.outputs.registry }}/${{ steps.repos.outputs.backend_repository }}:${IMAGE_TAG}"
           if aws ecr describe-images \
             --region "${AWS_REGION}" \
-            --repository-name "${{ needs.ecr.outputs.backend_repository }}" \
+            --repository-name "${{ steps.repos.outputs.backend_repository }}" \
             --image-ids imageTag="${IMAGE_TAG}" >/dev/null 2>&1; then
             echo "Backend image already exists: ${IMAGE_URI}"
             exit 0
@@ -440,10 +421,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          IMAGE_URI="${{ needs.ecr.outputs.registry }}/${{ needs.ecr.outputs.frontend_repository }}:${IMAGE_TAG}"
+          IMAGE_URI="${{ steps.repos.outputs.registry }}/${{ steps.repos.outputs.frontend_repository }}:${IMAGE_TAG}"
           if aws ecr describe-images \
             --region "${AWS_REGION}" \
-            --repository-name "${{ needs.ecr.outputs.frontend_repository }}" \
+            --repository-name "${{ steps.repos.outputs.frontend_repository }}" \
             --image-ids imageTag="${IMAGE_TAG}" >/dev/null 2>&1; then
             echo "Frontend image already exists: ${IMAGE_URI}"
             exit 0
@@ -472,11 +453,11 @@ jobs:
           BACKEND_IMAGE_TAG="${IMAGE_TAG}"
 
           if [[ "${{ needs.detect_changes.outputs.build_frontend }}" != "true" ]]; then
-            FRONTEND_IMAGE_TAG="$(latest_tag "${{ needs.ecr.outputs.frontend_repository }}")"
+            FRONTEND_IMAGE_TAG="$(latest_tag "${{ steps.repos.outputs.frontend_repository }}")"
           fi
 
           if [[ "${{ needs.detect_changes.outputs.build_backend }}" != "true" ]]; then
-            BACKEND_IMAGE_TAG="$(latest_tag "${{ needs.ecr.outputs.backend_repository }}")"
+            BACKEND_IMAGE_TAG="$(latest_tag "${{ steps.repos.outputs.backend_repository }}")"
           fi
 
           if [[ -z "${FRONTEND_IMAGE_TAG}" || "${FRONTEND_IMAGE_TAG}" == "None" ]]; then
@@ -491,8 +472,8 @@ jobs:
 
           echo "frontend_image_tag=${FRONTEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "backend_image_tag=${BACKEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
-          echo "frontend_image_uri=${{ needs.ecr.outputs.registry }}/${{ needs.ecr.outputs.frontend_repository }}:${FRONTEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
-          echo "backend_image_uri=${{ needs.ecr.outputs.registry }}/${{ needs.ecr.outputs.backend_repository }}:${BACKEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image_uri=${{ steps.repos.outputs.registry }}/${{ steps.repos.outputs.frontend_repository }}:${FRONTEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "backend_image_uri=${{ steps.repos.outputs.registry }}/${{ steps.repos.outputs.backend_repository }}:${BACKEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
   trivy_scan:
     name: Trivy Image Scan
@@ -500,9 +481,8 @@ jobs:
     needs:
       - resolve_promotion
       - detect_changes
-      - ecr
       - docker
-    if: always() && needs.detect_changes.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && needs.ecr.result == 'success' && needs.docker.result == 'success'
+    if: always() && needs.detect_changes.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && needs.docker.result == 'success'
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -517,7 +497,7 @@ jobs:
           set -euo pipefail
 
           aws ecr get-login-password --region "${AWS_REGION}" \
-            | docker login --username AWS --password-stdin "${{ needs.ecr.outputs.registry }}"
+            | docker login --username AWS --password-stdin "${{ needs.docker.outputs.registry }}"
 
       - name: Scan backend image
         if: needs.detect_changes.outputs.build_backend == 'true' || github.event_name == 'workflow_dispatch'
@@ -557,10 +537,9 @@ jobs:
     needs:
       - resolve_promotion
       - detect_changes
-      - ecr
       - docker
       - trivy_scan
-    if: always() && needs.detect_changes.outputs.run_environment == 'true' && needs.ecr.result == 'success' && (needs.resolve_promotion.outputs.action != 'apply' || (needs.docker.result == 'success' && needs.trivy_scan.result == 'success'))
+    if: always() && needs.detect_changes.outputs.run_environment == 'true' && (needs.resolve_promotion.outputs.action != 'apply' || (needs.docker.result == 'success' && needs.trivy_scan.result == 'success'))
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
       STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
