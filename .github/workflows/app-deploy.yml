@@ -68,13 +68,18 @@ env:
 
 jobs:
   resolve_promotion:
-    name: Resolve Promotion
+    name: Resolve Promotion and Changes
     runs-on: ubuntu-latest
     outputs:
       action: ${{ steps.resolve.outputs.action }}
       target_environment: ${{ steps.resolve.outputs.target_environment }}
       state_key: ${{ steps.resolve.outputs.state_key }}
       tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
+      run_environment: ${{ steps.scope.outputs.run_environment }}
+      build_frontend: ${{ steps.scope.outputs.build_frontend }}
+      build_backend: ${{ steps.scope.outputs.build_backend }}
+      run_sonarqube: ${{ steps.scope.outputs.run_sonarqube }}
+      run_checkov: ${{ steps.scope.outputs.run_checkov }}
     steps:
       - name: Validate promotion path
         id: resolve
@@ -151,18 +156,6 @@ jobs:
 
           echo "Resolved app deployment: event=${{ github.event_name }}, source=${SOURCE_BRANCH}, target=${TARGET_ENVIRONMENT}, action=${ACTION}"
 
-  detect_changes:
-    name: Detect Changes
-    runs-on: ubuntu-latest
-    needs:
-      - resolve_promotion
-    outputs:
-      run_environment: ${{ steps.scope.outputs.run_environment }}
-      build_frontend: ${{ steps.scope.outputs.build_frontend }}
-      build_backend: ${{ steps.scope.outputs.build_backend }}
-      run_sonarqube: ${{ steps.scope.outputs.run_sonarqube }}
-      run_checkov: ${{ steps.scope.outputs.run_checkov }}
-    steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -236,7 +229,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          TARGET_ENVIRONMENT="${{ needs.resolve_promotion.outputs.target_environment }}"
+          TARGET_ENVIRONMENT="${{ steps.resolve.outputs.target_environment }}"
           RUN_ENVIRONMENT=false
           BUILD_FRONTEND=false
           BUILD_BACKEND=false
@@ -286,8 +279,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - resolve_promotion
-      - detect_changes
-    if: needs.detect_changes.outputs.run_environment == 'true' && needs.detect_changes.outputs.run_sonarqube == 'true' && github.event_name != 'pull_request'
+    if: needs.resolve_promotion.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.run_sonarqube == 'true' && github.event_name != 'pull_request'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -369,8 +361,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - resolve_promotion
-      - detect_changes
-    if: needs.detect_changes.outputs.run_environment == 'true' && needs.detect_changes.outputs.run_checkov == 'true'
+    if: needs.resolve_promotion.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.run_checkov == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -447,11 +438,10 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - resolve_promotion
-      - detect_changes
       - sonarqube_scan
       - checkov_scan
       - prod_approval
-    if: always() && needs.detect_changes.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && (needs.sonarqube_scan.result == 'success' || needs.sonarqube_scan.result == 'skipped') && (needs.checkov_scan.result == 'success' || needs.checkov_scan.result == 'skipped') && (needs.resolve_promotion.outputs.target_environment != 'prod' || needs.prod_approval.result == 'success')
+    if: always() && needs.resolve_promotion.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && (needs.sonarqube_scan.result == 'success' || needs.sonarqube_scan.result == 'skipped') && (needs.checkov_scan.result == 'success' || needs.checkov_scan.result == 'skipped') && (needs.resolve_promotion.outputs.target_environment != 'prod' || needs.prod_approval.result == 'success')
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
     outputs:
@@ -509,7 +499,7 @@ jobs:
             | docker login --username AWS --password-stdin "${{ steps.repos.outputs.registry }}"
 
       - name: Build and push backend
-        if: needs.detect_changes.outputs.build_backend == 'true'
+        if: needs.resolve_promotion.outputs.build_backend == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -527,7 +517,7 @@ jobs:
           docker push "${IMAGE_URI}"
 
       - name: Build and push frontend
-        if: needs.detect_changes.outputs.build_frontend == 'true'
+        if: needs.resolve_promotion.outputs.build_frontend == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -563,11 +553,11 @@ jobs:
           FRONTEND_IMAGE_TAG="${IMAGE_TAG}"
           BACKEND_IMAGE_TAG="${IMAGE_TAG}"
 
-          if [[ "${{ needs.detect_changes.outputs.build_frontend }}" != "true" ]]; then
+          if [[ "${{ needs.resolve_promotion.outputs.build_frontend }}" != "true" ]]; then
             FRONTEND_IMAGE_TAG="$(latest_tag "${{ steps.repos.outputs.frontend_repository }}")"
           fi
 
-          if [[ "${{ needs.detect_changes.outputs.build_backend }}" != "true" ]]; then
+          if [[ "${{ needs.resolve_promotion.outputs.build_backend }}" != "true" ]]; then
             BACKEND_IMAGE_TAG="$(latest_tag "${{ steps.repos.outputs.backend_repository }}")"
           fi
 
@@ -591,9 +581,8 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - resolve_promotion
-      - detect_changes
       - docker
-    if: always() && needs.detect_changes.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && needs.docker.result == 'success'
+    if: always() && needs.resolve_promotion.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && needs.docker.result == 'success'
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -612,7 +601,7 @@ jobs:
 
       - name: Scan backend image
         id: trivy_backend
-        if: needs.detect_changes.outputs.build_backend == 'true'
+        if: needs.resolve_promotion.outputs.build_backend == 'true'
         continue-on-error: true
         shell: bash
         run: |
@@ -668,7 +657,7 @@ jobs:
 
       - name: Scan frontend image
         id: trivy_frontend
-        if: needs.detect_changes.outputs.build_frontend == 'true'
+        if: needs.resolve_promotion.outputs.build_frontend == 'true'
         continue-on-error: true
         shell: bash
         run: |
@@ -723,7 +712,7 @@ jobs:
             "${{ needs.docker.outputs.frontend_image_uri }}"
 
       - name: Upload Trivy report
-        if: always() && (needs.detect_changes.outputs.build_frontend == 'true' || needs.detect_changes.outputs.build_backend == 'true')
+        if: always() && (needs.resolve_promotion.outputs.build_frontend == 'true' || needs.resolve_promotion.outputs.build_backend == 'true')
         uses: actions/upload-artifact@v4
         with:
           name: trivy-image-report-${{ needs.resolve_promotion.outputs.target_environment }}
@@ -731,14 +720,14 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload backend Trivy SARIF
-        if: always() && needs.detect_changes.outputs.build_backend == 'true'
+        if: always() && needs.resolve_promotion.outputs.build_backend == 'true'
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-reports/backend.sarif
           category: trivy-backend-image-${{ needs.resolve_promotion.outputs.target_environment }}
 
       - name: Upload frontend Trivy SARIF
-        if: always() && needs.detect_changes.outputs.build_frontend == 'true'
+        if: always() && needs.resolve_promotion.outputs.build_frontend == 'true'
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-reports/frontend.sarif
@@ -756,10 +745,9 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - resolve_promotion
-      - detect_changes
       - docker
       - trivy_scan
-    if: always() && needs.detect_changes.outputs.run_environment == 'true' && (needs.resolve_promotion.outputs.action != 'apply' || (needs.docker.result == 'success' && (needs.trivy_scan.result == 'success' || needs.trivy_scan.result == 'skipped')))
+    if: always() && needs.resolve_promotion.outputs.run_environment == 'true' && (needs.resolve_promotion.outputs.action != 'apply' || (needs.docker.result == 'success' && (needs.trivy_scan.result == 'success' || needs.trivy_scan.result == 'skipped')))
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
       STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
@@ -907,8 +895,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - resolve_promotion
-      - detect_changes
-    if: needs.detect_changes.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && needs.resolve_promotion.outputs.target_environment == 'prod'
+    if: needs.resolve_promotion.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && needs.resolve_promotion.outputs.target_environment == 'prod'
     environment: prod
     steps:
       - name: Approval received
@@ -971,10 +958,9 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - resolve_promotion
-      - detect_changes
       - docker
       - apply
-    if: always() && needs.resolve_promotion.outputs.action == 'apply' && needs.apply.result == 'success' && (needs.detect_changes.outputs.build_frontend == 'true' || needs.detect_changes.outputs.build_backend == 'true')
+    if: always() && needs.resolve_promotion.outputs.action == 'apply' && needs.apply.result == 'success' && (needs.resolve_promotion.outputs.build_frontend == 'true' || needs.resolve_promotion.outputs.build_backend == 'true')
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
       STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
@@ -1015,8 +1001,8 @@ jobs:
         working-directory: terraform
         shell: bash
         env:
-          BUILD_FRONTEND: ${{ needs.detect_changes.outputs.build_frontend }}
-          BUILD_BACKEND: ${{ needs.detect_changes.outputs.build_backend }}
+          BUILD_FRONTEND: ${{ needs.resolve_promotion.outputs.build_frontend }}
+          BUILD_BACKEND: ${{ needs.resolve_promotion.outputs.build_backend }}
         run: |
           set -euo pipefail
 
@@ -1116,7 +1102,6 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - resolve_promotion
-      - detect_changes
       - docker
       - apply
       - deploy_containers
