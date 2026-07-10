@@ -601,6 +601,7 @@ jobs:
     needs:
       - detect_changes
       - resolve_outputs
+      - sonarqube
     if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.trivy == 'true')
     steps:
       - name: Configure AWS credentials
@@ -676,6 +677,7 @@ jobs:
     needs:
       - detect_changes
       - resolve_outputs
+      - trivy
     if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.checkov == 'true')
     steps:
       - name: Configure AWS credentials
@@ -733,6 +735,7 @@ jobs:
     needs:
       - detect_changes
       - resolve_outputs
+      - checkov
     if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.grafana == 'true')
     steps:
       - name: Verify Grafana endpoint
@@ -808,6 +811,7 @@ jobs:
     needs:
       - detect_changes
       - resolve_outputs
+      - grafana
     if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.prometheus == 'true')
     steps:
       - name: Verify Prometheus endpoint
