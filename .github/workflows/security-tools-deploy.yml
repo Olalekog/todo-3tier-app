@@ -565,6 +565,7 @@ jobs:
             --instance-ids "${INSTANCE_ID}" \
             --document-name "AWS-RunShellScript" \
             --comment "Verify SonarQube container" \
+            --timeout-seconds 1200 \
             --parameters 'commands=["set -eux","TOOLS_HOME=/opt/security-tools","SONARQUBE_IMAGE=${{ env.SONARQUBE_IMAGE }}","sysctl -w vm.max_map_count=524288","sysctl -w fs.file-max=131072","mkdir -p \"$TOOLS_HOME/sonarqube/data\" \"$TOOLS_HOME/sonarqube/extensions\" \"$TOOLS_HOME/sonarqube/logs\"","chown -R 1000:0 \"$TOOLS_HOME/sonarqube\"","docker network create security-tools >/dev/null 2>&1 || true","if ! docker inspect sonarqube >/dev/null 2>&1; then docker pull \"$SONARQUBE_IMAGE\"; docker run -d --name sonarqube --restart unless-stopped --network security-tools -p 9000:9000 --ulimit nofile=131072:131072 --ulimit nproc=8192:8192 -v \"$TOOLS_HOME/sonarqube/data:/opt/sonarqube/data\" -v \"$TOOLS_HOME/sonarqube/extensions:/opt/sonarqube/extensions\" -v \"$TOOLS_HOME/sonarqube/logs:/opt/sonarqube/logs\" \"$SONARQUBE_IMAGE\"; fi","if [ \"$(docker inspect -f '\''{{.State.Running}}'\'' sonarqube)\" != \"true\" ]; then docker start sonarqube; fi","docker ps --filter name=sonarqube","docker logs --tail 80 sonarqube || true","docker inspect -f '\''{{.State.Running}}'\'' sonarqube"],executionTimeout=["900"]' \
             --query 'Command.CommandId' \
             --output text)"
@@ -623,6 +624,7 @@ jobs:
             --instance-ids "${INSTANCE_ID}" \
             --document-name "AWS-RunShellScript" \
             --comment "Verify Trivy container" \
+            --timeout-seconds 1200 \
             --parameters 'commands=["set -eux","TOOLS_HOME=/opt/security-tools","TRIVY_IMAGE=${{ env.TRIVY_IMAGE }}","mkdir -p \"$TOOLS_HOME/trivy/cache\"","docker network create security-tools >/dev/null 2>&1 || true","if ! docker inspect trivy >/dev/null 2>&1; then docker pull \"$TRIVY_IMAGE\"; docker run -d --name trivy --restart unless-stopped --network security-tools -p 4954:4954 -v \"$TOOLS_HOME/trivy/cache:/root/.cache/trivy\" \"$TRIVY_IMAGE\" server --listen 0.0.0.0:4954; fi","if [ \"$(docker inspect -f '\''{{.State.Running}}'\'' trivy)\" != \"true\" ]; then docker start trivy; fi","docker ps --filter name=trivy","docker logs --tail 80 trivy || true","if ! curl -fsS --max-time 10 http://127.0.0.1:4954/healthz; then docker restart trivy; sleep 20; fi","curl -fsS --max-time 10 http://127.0.0.1:4954/healthz"],executionTimeout=["900"]' \
             --query 'Command.CommandId' \
             --output text)"
@@ -699,6 +701,7 @@ jobs:
             --instance-ids "${INSTANCE_ID}" \
             --document-name "AWS-RunShellScript" \
             --comment "Verify Checkov container" \
+            --timeout-seconds 1200 \
             --parameters 'commands=["set -eux","TOOLS_HOME=/opt/security-tools","CHECKOV_IMAGE=${{ env.CHECKOV_IMAGE }}","mkdir -p \"$TOOLS_HOME/checkov/workspace\"","docker network create security-tools >/dev/null 2>&1 || true","if ! docker inspect checkov >/dev/null 2>&1; then docker pull \"$CHECKOV_IMAGE\"; docker run -d --name checkov --restart unless-stopped --network security-tools -v \"$TOOLS_HOME/checkov/workspace:/workspace\" --entrypoint sh \"$CHECKOV_IMAGE\" -c '\''checkov --version && tail -f /dev/null'\''; fi","if [ \"$(docker inspect -f '\''{{.State.Running}}'\'' checkov)\" != \"true\" ]; then docker start checkov; fi","docker ps --filter name=checkov","docker logs --tail 80 checkov || true","docker exec checkov checkov --version"],executionTimeout=["900"]' \
             --query 'Command.CommandId' \
             --output text)"
@@ -775,6 +778,7 @@ jobs:
             --instance-ids "${INSTANCE_ID}" \
             --document-name "AWS-RunShellScript" \
             --comment "Verify Grafana container" \
+            --timeout-seconds 1200 \
             --parameters 'commands=["set -eux","TOOLS_HOME=/opt/security-tools","GRAFANA_IMAGE=${{ env.GRAFANA_IMAGE }}","mkdir -p \"$TOOLS_HOME/grafana/data\"","chown -R 472:472 \"$TOOLS_HOME/grafana\"","docker network create security-tools >/dev/null 2>&1 || true","if ! docker inspect grafana >/dev/null 2>&1; then docker pull \"$GRAFANA_IMAGE\"; docker run -d --name grafana --restart unless-stopped --network security-tools -p 3000:3000 -v \"$TOOLS_HOME/grafana/data:/var/lib/grafana\" \"$GRAFANA_IMAGE\"; fi","if [ \"$(docker inspect -f '\''{{.State.Running}}'\'' grafana)\" != \"true\" ]; then docker start grafana; fi","docker ps --filter name=grafana","docker logs --tail 80 grafana || true","docker inspect -f '\''{{.State.Running}}'\'' grafana"],executionTimeout=["900"]' \
             --query 'Command.CommandId' \
             --output text)"
@@ -851,6 +855,7 @@ jobs:
             --instance-ids "${INSTANCE_ID}" \
             --document-name "AWS-RunShellScript" \
             --comment "Verify Prometheus container" \
+            --timeout-seconds 1200 \
             --parameters 'commands=["set -eux","TOOLS_HOME=/opt/security-tools","PROMETHEUS_IMAGE=${{ env.PROMETHEUS_IMAGE }}","mkdir -p \"$TOOLS_HOME/prometheus/data\"","chown -R 65534:65534 \"$TOOLS_HOME/prometheus/data\"","docker network create security-tools >/dev/null 2>&1 || true","if ! docker inspect prometheus >/dev/null 2>&1; then docker pull \"$PROMETHEUS_IMAGE\"; docker run -d --name prometheus --restart unless-stopped --network security-tools -p 9090:9090 -v \"$TOOLS_HOME/prometheus/data:/prometheus\" \"$PROMETHEUS_IMAGE\"; fi","if [ \"$(docker inspect -f '\''{{.State.Running}}'\'' prometheus)\" != \"true\" ]; then docker start prometheus; fi","docker ps --filter name=prometheus","docker logs --tail 80 prometheus || true","docker inspect -f '\''{{.State.Running}}'\'' prometheus"],executionTimeout=["900"]' \
             --query 'Command.CommandId' \
             --output text)"
