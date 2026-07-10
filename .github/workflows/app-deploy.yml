@@ -155,6 +155,8 @@ jobs:
       run_environment: ${{ steps.scope.outputs.run_environment }}
       build_frontend: ${{ steps.scope.outputs.build_frontend }}
       build_backend: ${{ steps.scope.outputs.build_backend }}
+      run_sonarqube: ${{ steps.scope.outputs.run_sonarqube }}
+      run_checkov: ${{ steps.scope.outputs.run_checkov }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -196,6 +198,8 @@ jobs:
           RUN_ENVIRONMENT=false
           BUILD_FRONTEND=false
           BUILD_BACKEND=false
+          RUN_SONARQUBE=false
+          RUN_CHECKOV=false
 
           if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.app }}" == "true" || "${{ steps.filters.outputs.shared_infra }}" == "true" ]]; then
             RUN_ENVIRONMENT=true
@@ -215,9 +219,90 @@ jobs:
             BUILD_BACKEND=true
           fi
 
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.frontend }}" == "true" || "${{ steps.filters.outputs.backend }}" == "true" ]]; then
+            RUN_SONARQUBE=true
+          fi
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.shared_infra }}" == "true" ]]; then
+            RUN_CHECKOV=true
+          elif [[ "${TARGET_ENVIRONMENT}" == "dev" && "${{ steps.filters.outputs.dev_config }}" == "true" ]]; then
+            RUN_CHECKOV=true
+          elif [[ "${TARGET_ENVIRONMENT}" == "uat" && "${{ steps.filters.outputs.uat_config }}" == "true" ]]; then
+            RUN_CHECKOV=true
+          elif [[ "${TARGET_ENVIRONMENT}" == "prod" && "${{ steps.filters.outputs.prod_config }}" == "true" ]]; then
+            RUN_CHECKOV=true
+          fi
+
           echo "run_environment=${RUN_ENVIRONMENT}" >> "$GITHUB_OUTPUT"
           echo "build_frontend=${BUILD_FRONTEND}" >> "$GITHUB_OUTPUT"
           echo "build_backend=${BUILD_BACKEND}" >> "$GITHUB_OUTPUT"
+          echo "run_sonarqube=${RUN_SONARQUBE}" >> "$GITHUB_OUTPUT"
+          echo "run_checkov=${RUN_CHECKOV}" >> "$GITHUB_OUTPUT"
+
+  sonarqube_scan:
+    name: SonarQube Scan
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_promotion
+      - detect_changes
+    if: needs.detect_changes.outputs.run_environment == 'true' && needs.detect_changes.outputs.run_sonarqube == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate SonarQube inputs
+        shell: bash
+        env:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${SONAR_HOST_URL}" ]]; then
+            echo "Missing required GitHub variable: SONAR_HOST_URL"
+            exit 1
+          fi
+
+          if [[ -z "${SONAR_TOKEN}" ]]; then
+            echo "Missing required GitHub secret: SONAR_TOKEN"
+            exit 1
+          fi
+
+      - name: Run SonarQube quality scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ env.PROJECT_NAME }}-${{ needs.resolve_promotion.outputs.target_environment }}
+            -Dsonar.qualitygate.wait=true
+
+  checkov_scan:
+    name: Checkov IaC Scan
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_promotion
+      - detect_changes
+    if: needs.detect_changes.outputs.run_environment == 'true' && needs.detect_changes.outputs.run_checkov == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Checkov scan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            bridgecrew/checkov:latest \
+            -d /repo/terraform \
+            --framework terraform \
+            --skip-path /repo/terraform/security-tools \
+            --quiet
 
   ecr:
     name: Create ECR
@@ -225,8 +310,10 @@ jobs:
     needs:
       - resolve_promotion
       - detect_changes
+      - sonarqube_scan
+      - checkov_scan
       - prod_approval
-    if: always() && needs.detect_changes.outputs.run_environment == 'true' && (needs.resolve_promotion.outputs.action != 'apply' || needs.resolve_promotion.outputs.target_environment != 'prod' || needs.prod_approval.result == 'success')
+    if: always() && needs.detect_changes.outputs.run_environment == 'true' && (needs.sonarqube_scan.result == 'success' || needs.sonarqube_scan.result == 'skipped') && (needs.checkov_scan.result == 'success' || needs.checkov_scan.result == 'skipped') && (needs.resolve_promotion.outputs.action != 'apply' || needs.resolve_promotion.outputs.target_environment != 'prod' || needs.prod_approval.result == 'success')
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
       STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
@@ -357,6 +444,8 @@ jobs:
     outputs:
       frontend_image_tag: ${{ steps.tags.outputs.frontend_image_tag }}
       backend_image_tag: ${{ steps.tags.outputs.backend_image_tag }}
+      frontend_image_uri: ${{ steps.tags.outputs.frontend_image_uri }}
+      backend_image_uri: ${{ steps.tags.outputs.backend_image_uri }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -450,6 +539,65 @@ jobs:
 
           echo "frontend_image_tag=${FRONTEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "backend_image_tag=${BACKEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "frontend_image_uri=${{ needs.ecr.outputs.registry }}/${{ needs.ecr.outputs.frontend_repository }}:${FRONTEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "backend_image_uri=${{ needs.ecr.outputs.registry }}/${{ needs.ecr.outputs.backend_repository }}:${BACKEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+  trivy_scan:
+    name: Trivy Image Scan
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_promotion
+      - detect_changes
+      - ecr
+      - docker
+    if: needs.detect_changes.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && needs.docker.result == 'success'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsAppTrivy
+
+      - name: Login to ECR
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin "${{ needs.ecr.outputs.registry }}"
+
+      - name: Scan backend image
+        if: needs.detect_changes.outputs.build_backend == 'true' || github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.docker:/root/.docker:ro" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            aquasec/trivy:latest image \
+            --exit-code 1 \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            "${{ needs.docker.outputs.backend_image_uri }}"
+
+      - name: Scan frontend image
+        if: needs.detect_changes.outputs.build_frontend == 'true' || github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.docker:/root/.docker:ro" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            aquasec/trivy:latest image \
+            --exit-code 1 \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            "${{ needs.docker.outputs.frontend_image_uri }}"
 
   plan:
     name: Terraform Plan
@@ -459,7 +607,8 @@ jobs:
       - detect_changes
       - ecr
       - docker
-    if: always() && needs.detect_changes.outputs.run_environment == 'true' && needs.ecr.result == 'success' && (needs.resolve_promotion.outputs.action != 'apply' || needs.docker.result == 'success')
+      - trivy_scan
+    if: always() && needs.detect_changes.outputs.run_environment == 'true' && needs.ecr.result == 'success' && (needs.resolve_promotion.outputs.action != 'apply' || (needs.docker.result == 'success' && needs.trivy_scan.result == 'success'))
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
       STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
