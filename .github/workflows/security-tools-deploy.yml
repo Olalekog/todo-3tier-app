@@ -48,6 +48,7 @@ env:
   BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
   TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
   TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION || '1.9.0' }}
+  TRIVY_IMAGE: aquasec/trivy:latest
   TFVARS_FILE: scurity-tools.tfvars
   USER_DATA_TEMPLATE_PATH: ../../templates/user_data_sonarqube.sh.tftpl
 
@@ -602,7 +603,7 @@ jobs:
             --instance-ids "${INSTANCE_ID}" \
             --document-name "AWS-RunShellScript" \
             --comment "Verify Trivy container" \
-            --parameters 'commands=["set -eux","docker ps --filter name=trivy","docker inspect -f '\''{{.State.Running}}'\'' trivy","docker logs --tail 80 trivy || true","if ! curl -fsS --max-time 10 http://127.0.0.1:4954/healthz; then docker restart trivy; sleep 20; fi","curl -fsS --max-time 10 http://127.0.0.1:4954/healthz"]' \
+            --parameters 'commands=["set -eux","TOOLS_HOME=/opt/security-tools","TRIVY_IMAGE=${TRIVY_IMAGE}","mkdir -p \"$TOOLS_HOME/trivy/cache\"","docker network create security-tools >/dev/null 2>&1 || true","if ! docker inspect trivy >/dev/null 2>&1; then docker pull \"$TRIVY_IMAGE\"; docker run -d --name trivy --restart unless-stopped --network security-tools -p 4954:4954 -v \"$TOOLS_HOME/trivy/cache:/root/.cache/trivy\" \"$TRIVY_IMAGE\" server --listen 0.0.0.0:4954; fi","if [ \"$(docker inspect -f '\''{{.State.Running}}'\'' trivy)\" != \"true\" ]; then docker start trivy; fi","docker ps --filter name=trivy","docker logs --tail 80 trivy || true","if ! curl -fsS --max-time 10 http://127.0.0.1:4954/healthz; then docker restart trivy; sleep 20; fi","curl -fsS --max-time 10 http://127.0.0.1:4954/healthz"]' \
             --query 'Command.CommandId' \
             --output text)"
 
