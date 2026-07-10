@@ -746,13 +746,161 @@ jobs:
         shell: bash
         run: terraform apply -auto-approve app.tfplan
 
+  deploy_containers:
+    name: Deploy App Containers
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_promotion
+      - detect_changes
+      - docker
+      - apply
+    if: always() && needs.resolve_promotion.outputs.action == 'apply' && needs.apply.result == 'success' && (needs.detect_changes.outputs.build_frontend == 'true' || needs.detect_changes.outputs.build_backend == 'true' || github.event_name == 'workflow_dispatch')
+    env:
+      ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
+      STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
+      TFVARS_FILE: ${{ needs.resolve_promotion.outputs.tfvars_file }}
+      FRONTEND_IMAGE_URI: ${{ needs.docker.outputs.frontend_image_uri }}
+      BACKEND_IMAGE_URI: ${{ needs.docker.outputs.backend_image_uri }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsAppContainerDeploy
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Deploy changed containers through SSM
+        working-directory: terraform
+        shell: bash
+        env:
+          BUILD_FRONTEND: ${{ needs.detect_changes.outputs.build_frontend }}
+          BUILD_BACKEND: ${{ needs.detect_changes.outputs.build_backend }}
+        run: |
+          set -euo pipefail
+
+          FRONTEND_INSTANCE_ID="$(terraform output -raw frontend_instance_id)"
+          BACKEND_INSTANCE_ID="$(terraform output -raw backend_instance_id)"
+          BACKEND_PRIVATE_IP="$(terraform output -raw backend_private_ip)"
+          DB_HOST="$(terraform output -raw db_address)"
+          DB_NAME="$(terraform output -raw db_name 2>/dev/null || echo todoapp)"
+          DB_USER="$(terraform output -raw db_username 2>/dev/null || echo todo_admin)"
+          DB_PASSWORD_B64="$(printf '%s' "${DB_PASSWORD}" | base64 -w0)"
+
+          send_and_wait() {
+            local instance_id="$1"
+            local comment="$2"
+            local command="$3"
+            local parameters
+            local command_id
+            local result
+            local status
+
+            parameters="$(jq -n --arg command "${command}" '{commands: [$command], executionTimeout: ["900"]}')"
+            command_id="$(aws ssm send-command \
+              --region "${AWS_REGION}" \
+              --instance-ids "${instance_id}" \
+              --document-name "AWS-RunShellScript" \
+              --comment "${comment}" \
+              --parameters "${parameters}" \
+              --query 'Command.CommandId' \
+              --output text)"
+
+            for attempt in {1..60}; do
+              result="$(aws ssm get-command-invocation \
+                --region "${AWS_REGION}" \
+                --command-id "${command_id}" \
+                --instance-id "${instance_id}" \
+                --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+                --output json)"
+              status="$(jq -r '.Status' <<<"${result}")"
+
+              if [[ "${status}" == "Success" ]]; then
+                echo "${result}"
+                return 0
+              fi
+
+              if [[ "${status}" == "Failed" || "${status}" == "Cancelled" || "${status}" == "TimedOut" || "${status}" == "Cancelling" ]]; then
+                echo "${result}"
+                return 1
+              fi
+
+              sleep 10
+            done
+
+            echo "${result}"
+            echo "SSM command did not finish in time."
+            return 1
+          }
+
+          if [[ "${BUILD_BACKEND}" == "true" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            backend_command="$(cat <<SCRIPT
+          set -euo pipefail
+          AWS_REGION="${AWS_REGION}"
+          IMAGE_URI="${BACKEND_IMAGE_URI}"
+          DB_HOST="${DB_HOST}"
+          DB_NAME="${DB_NAME}"
+          DB_USER="${DB_USER}"
+          DB_PASSWORD="\$(printf '%s' '${DB_PASSWORD_B64}' | base64 -d)"
+          REGISTRY="\${IMAGE_URI%%/*}"
+          aws ecr get-login-password --region "\${AWS_REGION}" | docker login --username AWS --password-stdin "\${REGISTRY}"
+          docker pull "\${IMAGE_URI}"
+          docker rm -f todo-backend >/dev/null 2>&1 || true
+          docker run -d --name todo-backend --restart unless-stopped -p 8000:8000 -e DB_HOST="\${DB_HOST}" -e DB_PORT="3306" -e DB_NAME="\${DB_NAME}" -e DB_USER="\${DB_USER}" -e DB_PASSWORD="\${DB_PASSWORD}" "\${IMAGE_URI}"
+          docker ps --filter name=todo-backend
+          SCRIPT
+          )"
+            send_and_wait "${BACKEND_INSTANCE_ID}" "Deploy backend container" "${backend_command}"
+          fi
+
+          if [[ "${BUILD_FRONTEND}" == "true" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            frontend_command="$(cat <<SCRIPT
+          set -euo pipefail
+          AWS_REGION="${AWS_REGION}"
+          IMAGE_URI="${FRONTEND_IMAGE_URI}"
+          BACKEND_HOST="${BACKEND_PRIVATE_IP}"
+          REGISTRY="\${IMAGE_URI%%/*}"
+          aws ecr get-login-password --region "\${AWS_REGION}" | docker login --username AWS --password-stdin "\${REGISTRY}"
+          docker pull "\${IMAGE_URI}"
+          docker rm -f todo-frontend >/dev/null 2>&1 || true
+          docker run -d --name todo-frontend --restart unless-stopped -p 80:80 -e BACKEND_HOST="\${BACKEND_HOST}" "\${IMAGE_URI}"
+          docker ps --filter name=todo-frontend
+          SCRIPT
+          )"
+            send_and_wait "${FRONTEND_INSTANCE_ID}" "Deploy frontend container" "${frontend_command}"
+          fi
+
   verify:
     name: Verify App
     runs-on: ubuntu-latest
     needs:
       - resolve_promotion
+      - detect_changes
+      - docker
       - apply
-    if: always() && needs.resolve_promotion.outputs.action == 'apply' && needs.apply.result == 'success'
+      - deploy_containers
+    if: always() && needs.resolve_promotion.outputs.action == 'apply' && needs.apply.result == 'success' && (needs.deploy_containers.result == 'success' || needs.deploy_containers.result == 'skipped')
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
       STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}

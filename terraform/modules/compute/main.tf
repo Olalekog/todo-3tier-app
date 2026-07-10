@@ -100,6 +100,13 @@ resource "aws_instance" "this" {
   user_data                   = local.rendered_user_data
   user_data_replace_on_change = var.user_data_replace_on_change
 
+  lifecycle {
+    ignore_changes = [
+      ami,
+      user_data
+    ]
+  }
+
   tags = merge(var.tags, {
     Name = "${var.project_name}-${var.environment}-${var.workload_name}"
   })
