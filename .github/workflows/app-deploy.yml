@@ -284,10 +284,8 @@ jobs:
           PROJECT_RESPONSE="$(curl -fsS -u "${SONAR_TOKEN}:" "${SONAR_HOST_URL%/}/api/projects/search?projects=${SONAR_PROJECT_KEY}" || true)"
           PROJECT_COUNT="$(jq -r '.components | length' <<<"${PROJECT_RESPONSE:-{\"components\":[]}}" 2>/dev/null || echo 0)"
           if [[ "${PROJECT_COUNT}" == "0" ]]; then
-            echo "SonarQube project '${SONAR_PROJECT_KEY}' was not found or SONAR_TOKEN cannot browse it."
-            echo "Create the project with key '${SONAR_PROJECT_KEY}', or grant the token user 'Execute Analysis' on that project."
-            echo "If the project should be auto-created, grant the token user global 'Create Projects' permission."
-            exit 1
+            echo "::warning::SonarQube project '${SONAR_PROJECT_KEY}' was not found by the browse preflight, or SONAR_TOKEN cannot browse projects."
+            echo "::warning::Continuing to scanner. If scanner fails, create project '${SONAR_PROJECT_KEY}' and grant the token user 'Execute Analysis'."
           fi
 
       - name: Run SonarQube quality scan
