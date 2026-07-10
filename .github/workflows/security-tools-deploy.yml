@@ -130,6 +130,11 @@ jobs:
       grafana: ${{ steps.filters.outputs.grafana }}
       prometheus: ${{ steps.filters.outputs.prometheus }}
       run_all: ${{ steps.scope.outputs.run_all }}
+      run_sonarqube: ${{ steps.scope.outputs.run_sonarqube }}
+      run_trivy: ${{ steps.scope.outputs.run_trivy }}
+      run_checkov: ${{ steps.scope.outputs.run_checkov }}
+      run_grafana: ${{ steps.scope.outputs.run_grafana }}
+      run_prometheus: ${{ steps.scope.outputs.run_prometheus }}
       any_tool: ${{ steps.scope.outputs.any_tool }}
     steps:
       - name: Checkout repository
@@ -167,11 +172,42 @@ jobs:
           fi
 
           ANY_TOOL=false
-          if [[ "${RUN_ALL}" == "true" || "${{ steps.filters.outputs.sonarqube }}" == "true" || "${{ steps.filters.outputs.trivy }}" == "true" || "${{ steps.filters.outputs.checkov }}" == "true" || "${{ steps.filters.outputs.grafana }}" == "true" || "${{ steps.filters.outputs.prometheus }}" == "true" ]]; then
+          RUN_SONARQUBE=false
+          RUN_TRIVY=false
+          RUN_CHECKOV=false
+          RUN_GRAFANA=false
+          RUN_PROMETHEUS=false
+
+          if [[ "${RUN_ALL}" == "true" || "${{ steps.filters.outputs.sonarqube }}" == "true" ]]; then
+            RUN_SONARQUBE=true
+          fi
+
+          if [[ "${RUN_ALL}" == "true" || "${{ steps.filters.outputs.trivy }}" == "true" ]]; then
+            RUN_TRIVY=true
+          fi
+
+          if [[ "${RUN_ALL}" == "true" || "${{ steps.filters.outputs.checkov }}" == "true" ]]; then
+            RUN_CHECKOV=true
+          fi
+
+          if [[ "${RUN_ALL}" == "true" || "${{ steps.filters.outputs.grafana }}" == "true" ]]; then
+            RUN_GRAFANA=true
+          fi
+
+          if [[ "${RUN_ALL}" == "true" || "${{ steps.filters.outputs.prometheus }}" == "true" ]]; then
+            RUN_PROMETHEUS=true
+          fi
+
+          if [[ "${RUN_SONARQUBE}" == "true" || "${RUN_TRIVY}" == "true" || "${RUN_CHECKOV}" == "true" || "${RUN_GRAFANA}" == "true" || "${RUN_PROMETHEUS}" == "true" ]]; then
             ANY_TOOL=true
           fi
 
           echo "run_all=${RUN_ALL}" >> "$GITHUB_OUTPUT"
+          echo "run_sonarqube=${RUN_SONARQUBE}" >> "$GITHUB_OUTPUT"
+          echo "run_trivy=${RUN_TRIVY}" >> "$GITHUB_OUTPUT"
+          echo "run_checkov=${RUN_CHECKOV}" >> "$GITHUB_OUTPUT"
+          echo "run_grafana=${RUN_GRAFANA}" >> "$GITHUB_OUTPUT"
+          echo "run_prometheus=${RUN_PROMETHEUS}" >> "$GITHUB_OUTPUT"
           echo "any_tool=${ANY_TOOL}" >> "$GITHUB_OUTPUT"
 
   plan:
@@ -441,6 +477,10 @@ jobs:
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
       STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
+      RUN_SONARQUBE: ${{ needs.detect_changes.outputs.run_sonarqube }}
+      RUN_TRIVY: ${{ needs.detect_changes.outputs.run_trivy }}
+      RUN_GRAFANA: ${{ needs.detect_changes.outputs.run_grafana }}
+      RUN_PROMETHEUS: ${{ needs.detect_changes.outputs.run_prometheus }}
     outputs:
       sonarqube_url: ${{ steps.outputs.outputs.sonarqube_url }}
       trivy_server_url: ${{ steps.outputs.outputs.trivy_server_url }}
@@ -491,7 +531,25 @@ jobs:
             exit 1
           fi
 
-          for OUTPUT_NAME in sonarqube_url trivy_server_url prometheus_url grafana_url; do
+          REQUIRED_OUTPUTS=()
+
+          if [[ "${RUN_SONARQUBE}" == "true" ]]; then
+            REQUIRED_OUTPUTS+=(sonarqube_url)
+          fi
+
+          if [[ "${RUN_TRIVY}" == "true" ]]; then
+            REQUIRED_OUTPUTS+=(trivy_server_url)
+          fi
+
+          if [[ "${RUN_GRAFANA}" == "true" ]]; then
+            REQUIRED_OUTPUTS+=(grafana_url)
+          fi
+
+          if [[ "${RUN_PROMETHEUS}" == "true" ]]; then
+            REQUIRED_OUTPUTS+=(prometheus_url)
+          fi
+
+          for OUTPUT_NAME in "${REQUIRED_OUTPUTS[@]}"; do
             OUTPUT_VALUE="$(jq -r --arg name "${OUTPUT_NAME}" '.[$name].value // empty' terraform-outputs.json)"
             if [[ -z "${OUTPUT_VALUE}" || "${OUTPUT_VALUE}" == "null" ]]; then
               echo "Missing required Terraform output: ${OUTPUT_NAME}"
@@ -526,7 +584,7 @@ jobs:
     needs:
       - detect_changes
       - resolve_outputs
-    if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.sonarqube == 'true')
+    if: always() && needs.resolve_outputs.result == 'success' && needs.detect_changes.outputs.run_sonarqube == 'true'
     steps:
       - name: Verify SonarQube endpoint
         env:
@@ -604,7 +662,7 @@ jobs:
       - detect_changes
       - resolve_outputs
       - sonarqube
-    if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.trivy == 'true')
+    if: always() && needs.resolve_outputs.result == 'success' && needs.detect_changes.outputs.run_trivy == 'true'
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -682,7 +740,7 @@ jobs:
       - detect_changes
       - resolve_outputs
       - trivy
-    if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.checkov == 'true')
+    if: always() && needs.resolve_outputs.result == 'success' && needs.detect_changes.outputs.run_checkov == 'true'
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -742,7 +800,7 @@ jobs:
       - detect_changes
       - resolve_outputs
       - checkov
-    if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.grafana == 'true')
+    if: always() && needs.resolve_outputs.result == 'success' && needs.detect_changes.outputs.run_grafana == 'true'
     steps:
       - name: Verify Grafana endpoint
         env:
@@ -820,7 +878,7 @@ jobs:
       - detect_changes
       - resolve_outputs
       - grafana
-    if: always() && needs.resolve_outputs.result == 'success' && (needs.detect_changes.outputs.run_all == 'true' || needs.detect_changes.outputs.prometheus == 'true')
+    if: always() && needs.resolve_outputs.result == 'success' && needs.detect_changes.outputs.run_prometheus == 'true'
     steps:
       - name: Verify Prometheus endpoint
         env:
