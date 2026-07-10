@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev
+      - uat
     paths:
       - "frontend/**"
       - "backend/**"
@@ -23,13 +24,35 @@ on:
           - plan
           - apply
         default: apply
+      target_environment:
+        description: Promotion target
+        required: true
+        type: choice
+        options:
+          - dev
+          - uat
+          - prod
+        default: dev
+  pull_request:
+    branches:
+      - uat
+      - prod
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - "terraform/*.tf"
+      - "terraform/environments/**"
+      - "terraform/modules/**"
+      - "terraform/templates/user_data_frontend.sh.tftpl"
+      - "terraform/templates/user_data_backend.sh.tftpl"
+      - ".github/workflows/app-deploy.yml"
 
 permissions:
   id-token: write
   contents: read
 
 concurrency:
-  group: terraform-app-dev
+  group: terraform-app-${{ github.event.inputs.target_environment || github.base_ref || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -38,16 +61,102 @@ env:
   BOOTSTRAP_ROLE_ARN: ${{ vars.BOOTSTRAP_ROLE_ARN }}
   TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
   TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION || '1.9.0' }}
-  ENVIRONMENT: dev
-  STATE_KEY: ${{ vars.PROJECT_NAME }}/dev/app/terraform.tfstate
-  TFVARS_FILE: environments/dev.tfvars
   IMAGE_TAG: ${{ github.sha }}
   TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
 
 jobs:
+  resolve_promotion:
+    name: Resolve Promotion
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.resolve.outputs.action }}
+      target_environment: ${{ steps.resolve.outputs.target_environment }}
+      state_key: ${{ steps.resolve.outputs.state_key }}
+      tfvars_file: ${{ steps.resolve.outputs.tfvars_file }}
+    steps:
+      - name: Validate promotion path
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            ACTION="plan"
+            SOURCE_BRANCH="${GITHUB_HEAD_REF}"
+            TARGET_ENVIRONMENT="${GITHUB_BASE_REF}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ACTION="${{ github.event.inputs.action }}"
+            SOURCE_BRANCH="${GITHUB_REF_NAME}"
+            TARGET_ENVIRONMENT="${{ github.event.inputs.target_environment }}"
+          else
+            ACTION="apply"
+            SOURCE_BRANCH="${GITHUB_REF_NAME}"
+            TARGET_ENVIRONMENT="${GITHUB_REF_NAME}"
+          fi
+
+          case "${TARGET_ENVIRONMENT}" in
+            dev)
+              if [[ "${SOURCE_BRANCH}" != "dev" ]]; then
+                echo "Dev deployments must run from the dev branch."
+                exit 1
+              fi
+              ;;
+            uat)
+              if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+                if [[ "${SOURCE_BRANCH}" != "dev" ]]; then
+                  echo "Only pull requests from dev to uat are allowed."
+                  exit 1
+                fi
+              elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+                if [[ "${SOURCE_BRANCH}" != "dev" ]]; then
+                  echo "Manual UAT promotions must be dispatched from the dev branch."
+                  exit 1
+                fi
+              else
+                if [[ "${SOURCE_BRANCH}" != "uat" ]]; then
+                  echo "UAT push deployments must run from the uat branch."
+                  exit 1
+                fi
+              fi
+              ;;
+            prod)
+              if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+                if [[ "${SOURCE_BRANCH}" != "uat" ]]; then
+                  echo "Only pull requests from uat to prod are allowed."
+                  exit 1
+                fi
+              elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+                if [[ "${SOURCE_BRANCH}" != "uat" || "${ACTION}" != "apply" ]]; then
+                  echo "Prod deployments must be manually applied from the uat branch."
+                  exit 1
+                fi
+              else
+                echo "Prod deployments require manual approval and cannot run from push."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported target environment: ${TARGET_ENVIRONMENT}"
+              exit 1
+              ;;
+          esac
+
+          echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
+          echo "target_environment=${TARGET_ENVIRONMENT}" >> "$GITHUB_OUTPUT"
+          echo "state_key=${PROJECT_NAME}/${TARGET_ENVIRONMENT}/app/terraform.tfstate" >> "$GITHUB_OUTPUT"
+          echo "tfvars_file=environments/${TARGET_ENVIRONMENT}.tfvars" >> "$GITHUB_OUTPUT"
+
   ecr:
     name: Create ECR
     runs-on: ubuntu-latest
+    needs:
+      - resolve_promotion
+      - prod_approval
+    if: always() && (needs.resolve_promotion.outputs.action != 'apply' || needs.resolve_promotion.outputs.target_environment != 'prod' || needs.prod_approval.result == 'success')
+    env:
+      ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
+      STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
+      TFVARS_FILE: ${{ needs.resolve_promotion.outputs.tfvars_file }}
     outputs:
       frontend_repository: ${{ steps.repos.outputs.frontend_repository }}
       backend_repository: ${{ steps.repos.outputs.backend_repository }}
@@ -97,7 +206,7 @@ jobs:
         run: terraform validate
 
       - name: Import existing ECR repositories
-        if: github.event_name == 'push' || github.event.inputs.action == 'apply'
+        if: needs.resolve_promotion.outputs.action == 'apply'
         working-directory: terraform
         shell: bash
         run: |
@@ -134,7 +243,7 @@ jobs:
           import_if_exists "module.ecr.aws_ecr_repository.backend" "${BACKEND_REPOSITORY}"
 
       - name: Create ECR repositories
-        if: github.event_name == 'push' || github.event.inputs.action == 'apply'
+        if: needs.resolve_promotion.outputs.action == 'apply'
         working-directory: terraform
         shell: bash
         run: |
@@ -165,8 +274,11 @@ jobs:
     name: Build And Push Images
     runs-on: ubuntu-latest
     needs:
+      - resolve_promotion
       - ecr
-    if: github.event_name == 'push' || github.event.inputs.action == 'apply'
+    if: needs.resolve_promotion.outputs.action == 'apply'
+    env:
+      ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -223,9 +335,14 @@ jobs:
     name: Terraform Plan
     runs-on: ubuntu-latest
     needs:
+      - resolve_promotion
       - ecr
       - docker
-    if: always() && needs.ecr.result == 'success' && (github.event_name == 'workflow_dispatch' || needs.docker.result == 'success')
+    if: always() && needs.ecr.result == 'success' && (needs.resolve_promotion.outputs.action != 'apply' || needs.docker.result == 'success')
+    env:
+      ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
+      STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
+      TFVARS_FILE: ${{ needs.resolve_promotion.outputs.tfvars_file }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -362,12 +479,29 @@ jobs:
           path: terraform/app.tfplan
           if-no-files-found: error
 
+  prod_approval:
+    name: Prod Approval
+    runs-on: ubuntu-latest
+    needs:
+      - resolve_promotion
+    if: needs.resolve_promotion.outputs.action == 'apply' && needs.resolve_promotion.outputs.target_environment == 'prod'
+    environment: prod
+    steps:
+      - name: Approval received
+        shell: bash
+        run: echo "Approved prod app deployment."
+
   apply:
     name: Terraform Apply
     runs-on: ubuntu-latest
     needs:
+      - resolve_promotion
       - plan
-    if: github.event_name == 'push' || github.event.inputs.action == 'apply'
+    if: needs.resolve_promotion.outputs.action == 'apply' && needs.plan.result == 'success'
+    env:
+      ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
+      STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
+      TFVARS_FILE: ${{ needs.resolve_promotion.outputs.tfvars_file }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -412,8 +546,13 @@ jobs:
     name: Verify App
     runs-on: ubuntu-latest
     needs:
+      - resolve_promotion
       - apply
     if: needs.apply.result == 'success'
+    env:
+      ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
+      STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
+      TFVARS_FILE: ${{ needs.resolve_promotion.outputs.tfvars_file }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

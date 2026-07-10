@@ -8,6 +8,8 @@ crash.*.log
 *.tfvars
 !terraform.tfvars.example
 !terraform/environments/dev.tfvars
+!terraform/environments/uat.tfvars
+!terraform/environments/prod.tfvars
 !terraform/security-tools/deploy/scurity-tools.tfvars
 
 # Local environment files
