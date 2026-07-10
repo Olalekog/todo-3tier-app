@@ -75,6 +75,8 @@ The security and monitoring stack is separate from the app infrastructure:
 
 ## Architecture
 
+![AWS Solution Diagram - 3-Tier To-Do Application with Security and Monitoring](assets/aws_3_tier_to_do_app_architecture_security_monitoring.svg)
+
 ```mermaid
 flowchart TB
     User[User browser] -->|HTTP :80| FE[Frontend EC2 public subnet<br/>React + Nginx container]
