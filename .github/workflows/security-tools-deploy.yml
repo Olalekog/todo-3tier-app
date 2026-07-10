@@ -129,7 +129,6 @@ jobs:
       checkov: ${{ steps.filters.outputs.checkov }}
       grafana: ${{ steps.filters.outputs.grafana }}
       prometheus: ${{ steps.filters.outputs.prometheus }}
-      bootstrap: ${{ steps.filters.outputs.bootstrap }}
       run_all: ${{ steps.scope.outputs.run_all }}
       run_sonarqube: ${{ steps.scope.outputs.run_sonarqube }}
       run_trivy: ${{ steps.scope.outputs.run_trivy }}
@@ -148,7 +147,6 @@ jobs:
           filters: |
             terraform:
               - "terraform/security-tools/deploy/**"
-            bootstrap:
               - "terraform/templates/user_data_sonarqube.sh.tftpl"
               - ".github/workflows/security-tools-deploy.yml"
             sonarqube:
@@ -173,11 +171,6 @@ jobs:
             RUN_ALL=true
           fi
 
-          RUN_BOOTSTRAP=false
-          if [[ "${{ steps.filters.outputs.bootstrap }}" == "true" ]]; then
-            RUN_BOOTSTRAP=true
-          fi
-
           ANY_TOOL=false
           RUN_SONARQUBE=false
           RUN_TRIVY=false
@@ -185,23 +178,23 @@ jobs:
           RUN_GRAFANA=false
           RUN_PROMETHEUS=false
 
-          if [[ "${RUN_ALL}" == "true" || "${RUN_BOOTSTRAP}" == "true" || "${{ steps.filters.outputs.sonarqube }}" == "true" ]]; then
+          if [[ "${{ steps.filters.outputs.sonarqube }}" == "true" ]]; then
             RUN_SONARQUBE=true
           fi
 
-          if [[ "${RUN_ALL}" == "true" || "${RUN_BOOTSTRAP}" == "true" || "${{ steps.filters.outputs.trivy }}" == "true" ]]; then
+          if [[ "${{ steps.filters.outputs.trivy }}" == "true" ]]; then
             RUN_TRIVY=true
           fi
 
-          if [[ "${RUN_ALL}" == "true" || "${RUN_BOOTSTRAP}" == "true" || "${{ steps.filters.outputs.checkov }}" == "true" ]]; then
+          if [[ "${{ steps.filters.outputs.checkov }}" == "true" ]]; then
             RUN_CHECKOV=true
           fi
 
-          if [[ "${RUN_ALL}" == "true" || "${RUN_BOOTSTRAP}" == "true" || "${{ steps.filters.outputs.grafana }}" == "true" ]]; then
+          if [[ "${{ steps.filters.outputs.grafana }}" == "true" ]]; then
             RUN_GRAFANA=true
           fi
 
-          if [[ "${RUN_ALL}" == "true" || "${RUN_BOOTSTRAP}" == "true" || "${{ steps.filters.outputs.prometheus }}" == "true" ]]; then
+          if [[ "${{ steps.filters.outputs.prometheus }}" == "true" ]]; then
             RUN_PROMETHEUS=true
           fi
 
