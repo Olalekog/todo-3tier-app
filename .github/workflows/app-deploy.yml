@@ -452,6 +452,11 @@ jobs:
           FRONTEND_REPOSITORY="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
           BACKEND_REPOSITORY="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
 
+          if [[ -z "${REGISTRY}" || -z "${FRONTEND_REPOSITORY}" || -z "${BACKEND_REPOSITORY}" ]]; then
+            echo "Failed to resolve ECR repository outputs."
+            exit 1
+          fi
+
           echo "registry=${REGISTRY}" >> "$GITHUB_OUTPUT"
           echo "frontend_repository=${FRONTEND_REPOSITORY}" >> "$GITHUB_OUTPUT"
           echo "backend_repository=${BACKEND_REPOSITORY}" >> "$GITHUB_OUTPUT"
@@ -463,7 +468,7 @@ jobs:
       - resolve_promotion
       - detect_changes
       - ecr
-    if: needs.detect_changes.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply'
+    if: always() && needs.detect_changes.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && needs.ecr.result == 'success'
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
     outputs:
@@ -575,7 +580,7 @@ jobs:
       - detect_changes
       - ecr
       - docker
-    if: needs.detect_changes.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && needs.docker.result == 'success'
+    if: always() && needs.detect_changes.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply' && needs.ecr.result == 'success' && needs.docker.result == 'success'
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
