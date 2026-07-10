@@ -157,7 +157,7 @@ function App() {
 
       await loadTodos();
     } catch (err) {
-      setError(`Failed to delete the todo. ${err.message}`);
+      setError(`Failed to delete todo. ${err.message}`);
     }
   }
 
