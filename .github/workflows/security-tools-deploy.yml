@@ -4,7 +4,19 @@ on:
   push:
     branches:
       - dev
+    paths:
+      - "terraform/security-tools/deploy/**"
+      - "terraform/security-tools/sonarqube/**"
+      - "terraform/security-tools/trivy/**"
+      - "terraform/security-tools/checkov/**"
+      - "terraform/security-tools/grafana/**"
+      - "terraform/security-tools/prometheus/**"
+      - "terraform/templates/user_data_sonarqube.sh.tftpl"
+      - ".github/workflows/security-tools-deploy.yml"
+  pull_request:
+    branches:
       - uat
+      - prod
     paths:
       - "terraform/security-tools/deploy/**"
       - "terraform/security-tools/sonarqube/**"
@@ -39,7 +51,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: terraform-security-tools-${{ github.event.inputs.target_environment || github.ref_name }}
+  group: terraform-security-tools-${{ github.event.inputs.target_environment || github.base_ref || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -71,14 +83,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          SOURCE_BRANCH="${GITHUB_REF_NAME}"
-
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            ACTION="plan"
+            SOURCE_BRANCH="${GITHUB_HEAD_REF}"
+            TARGET_ENVIRONMENT="${GITHUB_BASE_REF}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             ACTION="${{ github.event.inputs.action }}"
+            SOURCE_BRANCH="${GITHUB_REF_NAME}"
             TARGET_ENVIRONMENT="${{ github.event.inputs.target_environment }}"
-          else
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
             ACTION="apply"
+            SOURCE_BRANCH="${GITHUB_REF_NAME}"
             TARGET_ENVIRONMENT="${SOURCE_BRANCH}"
+          else
+            echo "Unsupported event: ${{ github.event_name }}"
+            exit 1
           fi
 
           case "${TARGET_ENVIRONMENT}" in
@@ -89,21 +108,34 @@ jobs:
               fi
               ;;
             uat)
-              if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+              if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+                if [[ "${SOURCE_BRANCH}" != "dev" ]]; then
+                  echo "Only pull requests from dev to uat are allowed."
+                  exit 1
+                fi
+              elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
                 if [[ "${SOURCE_BRANCH}" != "dev" ]]; then
                   echo "Manual UAT promotions must be dispatched from the dev branch."
                   exit 1
                 fi
               else
-                if [[ "${SOURCE_BRANCH}" != "uat" ]]; then
-                  echo "UAT push deployments must run from the uat branch."
-                  exit 1
-                fi
+                echo "UAT security-tools deployments are not allowed from push. Use manual dispatch from dev."
+                exit 1
               fi
               ;;
             prod)
-              if [[ "${{ github.event_name }}" != "workflow_dispatch" || "${SOURCE_BRANCH}" != "uat" ]]; then
-                echo "Prod deployments must be manually dispatched from the uat branch."
+              if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+                if [[ "${SOURCE_BRANCH}" != "uat" ]]; then
+                  echo "Only pull requests from uat to prod are allowed."
+                  exit 1
+                fi
+              elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+                if [[ "${SOURCE_BRANCH}" != "uat" || "${ACTION}" != "apply" ]]; then
+                  echo "Prod deployments must be manually applied from the uat branch."
+                  exit 1
+                fi
+              else
+                echo "Prod security-tools deployments require manual approval and cannot run from push."
                 exit 1
               fi
               ;;
@@ -116,6 +148,7 @@ jobs:
           echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
           echo "target_environment=${TARGET_ENVIRONMENT}" >> "$GITHUB_OUTPUT"
           echo "state_key=${PROJECT_NAME}/${TARGET_ENVIRONMENT}/security-tools/sucurity.state" >> "$GITHUB_OUTPUT"
+          echo "Resolved security-tools deployment: event=${{ github.event_name }}, source=${SOURCE_BRANCH}, target=${TARGET_ENVIRONMENT}, action=${ACTION}"
 
   detect_changes:
     name: Detect Changes
