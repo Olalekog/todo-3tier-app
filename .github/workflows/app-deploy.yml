@@ -153,6 +153,8 @@ jobs:
       - resolve_promotion
     outputs:
       run_environment: ${{ steps.scope.outputs.run_environment }}
+      build_frontend: ${{ steps.scope.outputs.build_frontend }}
+      build_backend: ${{ steps.scope.outputs.build_backend }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -162,6 +164,12 @@ jobs:
         uses: dorny/paths-filter@v3
         with:
           filters: |
+            frontend:
+              - "frontend/**"
+              - "terraform/templates/user_data_frontend.sh.tftpl"
+            backend:
+              - "backend/**"
+              - "terraform/templates/user_data_backend.sh.tftpl"
             app:
               - "frontend/**"
               - "backend/**"
@@ -186,6 +194,8 @@ jobs:
 
           TARGET_ENVIRONMENT="${{ needs.resolve_promotion.outputs.target_environment }}"
           RUN_ENVIRONMENT=false
+          BUILD_FRONTEND=false
+          BUILD_BACKEND=false
 
           if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.app }}" == "true" || "${{ steps.filters.outputs.shared_infra }}" == "true" ]]; then
             RUN_ENVIRONMENT=true
@@ -197,7 +207,17 @@ jobs:
             RUN_ENVIRONMENT=true
           fi
 
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.frontend }}" == "true" ]]; then
+            BUILD_FRONTEND=true
+          fi
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.backend }}" == "true" ]]; then
+            BUILD_BACKEND=true
+          fi
+
           echo "run_environment=${RUN_ENVIRONMENT}" >> "$GITHUB_OUTPUT"
+          echo "build_frontend=${BUILD_FRONTEND}" >> "$GITHUB_OUTPUT"
+          echo "build_backend=${BUILD_BACKEND}" >> "$GITHUB_OUTPUT"
 
   ecr:
     name: Create ECR
@@ -325,7 +345,7 @@ jobs:
           echo "backend_repository=${BACKEND_REPOSITORY}" >> "$GITHUB_OUTPUT"
 
   docker:
-    name: Build And Push Images
+    name: Prepare Images
     runs-on: ubuntu-latest
     needs:
       - resolve_promotion
@@ -334,6 +354,9 @@ jobs:
     if: needs.detect_changes.outputs.run_environment == 'true' && needs.resolve_promotion.outputs.action == 'apply'
     env:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
+    outputs:
+      frontend_image_tag: ${{ steps.tags.outputs.frontend_image_tag }}
+      backend_image_tag: ${{ steps.tags.outputs.backend_image_tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -353,6 +376,7 @@ jobs:
             | docker login --username AWS --password-stdin "${{ needs.ecr.outputs.registry }}"
 
       - name: Build and push backend
+        if: needs.detect_changes.outputs.build_backend == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -370,6 +394,7 @@ jobs:
           docker push "${IMAGE_URI}"
 
       - name: Build and push frontend
+        if: needs.detect_changes.outputs.build_frontend == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -386,6 +411,46 @@ jobs:
           docker build -t "${IMAGE_URI}" frontend
           docker push "${IMAGE_URI}"
 
+      - name: Resolve deployment image tags
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          latest_tag() {
+            local repository="$1"
+
+            aws ecr describe-images \
+              --region "${AWS_REGION}" \
+              --repository-name "${repository}" \
+              --query 'reverse(sort_by(imageDetails[?length(imageTags) > `0`], &imagePushedAt))[0].imageTags[0]' \
+              --output text
+          }
+
+          FRONTEND_IMAGE_TAG="${IMAGE_TAG}"
+          BACKEND_IMAGE_TAG="${IMAGE_TAG}"
+
+          if [[ "${{ needs.detect_changes.outputs.build_frontend }}" != "true" ]]; then
+            FRONTEND_IMAGE_TAG="$(latest_tag "${{ needs.ecr.outputs.frontend_repository }}")"
+          fi
+
+          if [[ "${{ needs.detect_changes.outputs.build_backend }}" != "true" ]]; then
+            BACKEND_IMAGE_TAG="$(latest_tag "${{ needs.ecr.outputs.backend_repository }}")"
+          fi
+
+          if [[ -z "${FRONTEND_IMAGE_TAG}" || "${FRONTEND_IMAGE_TAG}" == "None" ]]; then
+            echo "No frontend image tag is available in ECR. Change frontend files or run a manual apply to build one."
+            exit 1
+          fi
+
+          if [[ -z "${BACKEND_IMAGE_TAG}" || "${BACKEND_IMAGE_TAG}" == "None" ]]; then
+            echo "No backend image tag is available in ECR. Change backend files or run a manual apply to build one."
+            exit 1
+          fi
+
+          echo "frontend_image_tag=${FRONTEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "backend_image_tag=${BACKEND_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
   plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
@@ -399,6 +464,8 @@ jobs:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
       STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
       TFVARS_FILE: ${{ needs.resolve_promotion.outputs.tfvars_file }}
+      DEPLOY_FRONTEND_IMAGE_TAG: ${{ needs.docker.outputs.frontend_image_tag || 'latest' }}
+      DEPLOY_BACKEND_IMAGE_TAG: ${{ needs.docker.outputs.backend_image_tag || 'latest' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -441,8 +508,8 @@ jobs:
           RDS_MONITORING_POLICY_ARN="arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
           TF_VARS=(
             -var-file="${TFVARS_FILE}"
-            -var="frontend_image_tag=${IMAGE_TAG}"
-            -var="backend_image_tag=${IMAGE_TAG}"
+            -var="frontend_image_tag=${DEPLOY_FRONTEND_IMAGE_TAG}"
+            -var="backend_image_tag=${DEPLOY_BACKEND_IMAGE_TAG}"
           )
 
           forget_if_mismatched() {
@@ -524,8 +591,8 @@ jobs:
 
           terraform plan \
             -var-file="${TFVARS_FILE}" \
-            -var="frontend_image_tag=${IMAGE_TAG}" \
-            -var="backend_image_tag=${IMAGE_TAG}" \
+            -var="frontend_image_tag=${DEPLOY_FRONTEND_IMAGE_TAG}" \
+            -var="backend_image_tag=${DEPLOY_BACKEND_IMAGE_TAG}" \
             -out=app.tfplan
 
       - name: Upload Terraform plan
