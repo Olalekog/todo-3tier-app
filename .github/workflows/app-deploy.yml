@@ -96,6 +96,43 @@ jobs:
         shell: bash
         run: terraform validate
 
+      - name: Import existing ECR repositories
+        if: github.event_name == 'push' || github.event.inputs.action == 'apply'
+        working-directory: terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FRONTEND_REPOSITORY="${PROJECT_NAME}/${ENVIRONMENT}/todo-frontend"
+          BACKEND_REPOSITORY="${PROJECT_NAME}/${ENVIRONMENT}/todo-backend"
+          TF_VARS=(
+            -var-file="${TFVARS_FILE}"
+            -var="frontend_image_tag=${IMAGE_TAG}"
+            -var="backend_image_tag=${IMAGE_TAG}"
+          )
+
+          import_if_exists() {
+            local address="$1"
+            local repository="$2"
+
+            if terraform state show "${address}" >/dev/null 2>&1; then
+              echo "${address} is already managed by Terraform."
+              return
+            fi
+
+            if aws ecr describe-repositories \
+              --region "${AWS_REGION}" \
+              --repository-names "${repository}" >/dev/null 2>&1; then
+              echo "Importing existing ECR repository ${repository} into ${address}."
+              terraform import "${TF_VARS[@]}" "${address}" "${repository}"
+            else
+              echo "ECR repository ${repository} does not exist yet."
+            fi
+          }
+
+          import_if_exists "module.ecr.aws_ecr_repository.frontend" "${FRONTEND_REPOSITORY}"
+          import_if_exists "module.ecr.aws_ecr_repository.backend" "${BACKEND_REPOSITORY}"
+
       - name: Create ECR repositories
         if: github.event_name == 'push' || github.event.inputs.action == 'apply'
         working-directory: terraform
