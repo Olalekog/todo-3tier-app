@@ -164,33 +164,70 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Detect changed paths
-        id: filters
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            frontend:
-              - "frontend/**"
-            backend:
-              - "backend/**"
-            app:
-              - "frontend/**"
-              - "backend/**"
-              - "terraform/templates/user_data_frontend.sh.tftpl"
-              - "terraform/templates/user_data_backend.sh.tftpl"
-            sonarqube_config:
-              - "sonar-project.properties"
-            shared_infra:
-              - "terraform/*.tf"
-              - "terraform/modules/**"
-              - ".github/workflows/app-deploy.yml"
-            dev_config:
-              - "terraform/environments/dev.tfvars"
-            uat_config:
-              - "terraform/environments/uat.tfvars"
-            prod_config:
-              - "terraform/environments/prod.tfvars"
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            CHANGED_FILES=""
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            CHANGED_FILES="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}")"
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            BEFORE_SHA="${{ github.event.before }}"
+            if [[ -z "${BEFORE_SHA}" || "${BEFORE_SHA}" =~ ^0+$ ]]; then
+              CHANGED_FILES="$(git diff-tree --no-commit-id --name-only -r "${GITHUB_SHA}")"
+            else
+              CHANGED_FILES="$(git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}")"
+            fi
+          else
+            CHANGED_FILES=""
+          fi
+
+          echo "Changed files:"
+          if [[ -n "${CHANGED_FILES}" ]]; then
+            echo "${CHANGED_FILES}"
+          else
+            echo "None detected for this event."
+          fi
+
+          has_change() {
+            local pattern="$1"
+            grep -Eq "${pattern}" <<<"${CHANGED_FILES}"
+          }
+
+          FRONTEND=false
+          BACKEND=false
+          APP=false
+          SONARQUBE_CONFIG=false
+          SHARED_INFRA=false
+          DEV_CONFIG=false
+          UAT_CONFIG=false
+          PROD_CONFIG=false
+
+          if has_change '^frontend/'; then FRONTEND=true; fi
+          if has_change '^backend/'; then BACKEND=true; fi
+          if has_change '^(frontend/|backend/|terraform/templates/user_data_frontend\.sh\.tftpl$|terraform/templates/user_data_backend\.sh\.tftpl$)'; then APP=true; fi
+          if has_change '^sonar-project\.properties$'; then SONARQUBE_CONFIG=true; fi
+          if has_change '^(terraform/[^/]+\.tf|terraform/modules/|\.github/workflows/app-deploy\.yml$)'; then SHARED_INFRA=true; fi
+          if has_change '^terraform/environments/dev\.tfvars$'; then DEV_CONFIG=true; fi
+          if has_change '^terraform/environments/uat\.tfvars$'; then UAT_CONFIG=true; fi
+          if has_change '^terraform/environments/prod\.tfvars$'; then PROD_CONFIG=true; fi
+
+          echo "frontend=${FRONTEND}" >> "$GITHUB_OUTPUT"
+          echo "backend=${BACKEND}" >> "$GITHUB_OUTPUT"
+          echo "app=${APP}" >> "$GITHUB_OUTPUT"
+          echo "sonarqube_config=${SONARQUBE_CONFIG}" >> "$GITHUB_OUTPUT"
+          echo "shared_infra=${SHARED_INFRA}" >> "$GITHUB_OUTPUT"
+          echo "dev_config=${DEV_CONFIG}" >> "$GITHUB_OUTPUT"
+          echo "uat_config=${UAT_CONFIG}" >> "$GITHUB_OUTPUT"
+          echo "prod_config=${PROD_CONFIG}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve workflow scope
         id: scope
@@ -205,35 +242,35 @@ jobs:
           RUN_SONARQUBE=false
           RUN_CHECKOV=false
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.app }}" == "true" || "${{ steps.filters.outputs.sonarqube_config }}" == "true" || "${{ steps.filters.outputs.shared_infra }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.changes.outputs.app }}" == "true" || "${{ steps.changes.outputs.sonarqube_config }}" == "true" || "${{ steps.changes.outputs.shared_infra }}" == "true" ]]; then
             RUN_ENVIRONMENT=true
-          elif [[ "${TARGET_ENVIRONMENT}" == "dev" && "${{ steps.filters.outputs.dev_config }}" == "true" ]]; then
+          elif [[ "${TARGET_ENVIRONMENT}" == "dev" && "${{ steps.changes.outputs.dev_config }}" == "true" ]]; then
             RUN_ENVIRONMENT=true
-          elif [[ "${TARGET_ENVIRONMENT}" == "uat" && "${{ steps.filters.outputs.uat_config }}" == "true" ]]; then
+          elif [[ "${TARGET_ENVIRONMENT}" == "uat" && "${{ steps.changes.outputs.uat_config }}" == "true" ]]; then
             RUN_ENVIRONMENT=true
-          elif [[ "${TARGET_ENVIRONMENT}" == "prod" && "${{ steps.filters.outputs.prod_config }}" == "true" ]]; then
+          elif [[ "${TARGET_ENVIRONMENT}" == "prod" && "${{ steps.changes.outputs.prod_config }}" == "true" ]]; then
             RUN_ENVIRONMENT=true
           fi
 
-          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.frontend }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.changes.outputs.frontend }}" == "true" ]]; then
             BUILD_FRONTEND=true
           fi
 
-          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.backend }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.changes.outputs.backend }}" == "true" ]]; then
             BUILD_BACKEND=true
           fi
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.frontend }}" == "true" || "${{ steps.filters.outputs.backend }}" == "true" || "${{ steps.filters.outputs.sonarqube_config }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.changes.outputs.frontend }}" == "true" || "${{ steps.changes.outputs.backend }}" == "true" || "${{ steps.changes.outputs.sonarqube_config }}" == "true" ]]; then
             RUN_SONARQUBE=true
           fi
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.shared_infra }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.changes.outputs.shared_infra }}" == "true" ]]; then
             RUN_CHECKOV=true
-          elif [[ "${TARGET_ENVIRONMENT}" == "dev" && "${{ steps.filters.outputs.dev_config }}" == "true" ]]; then
+          elif [[ "${TARGET_ENVIRONMENT}" == "dev" && "${{ steps.changes.outputs.dev_config }}" == "true" ]]; then
             RUN_CHECKOV=true
-          elif [[ "${TARGET_ENVIRONMENT}" == "uat" && "${{ steps.filters.outputs.uat_config }}" == "true" ]]; then
+          elif [[ "${TARGET_ENVIRONMENT}" == "uat" && "${{ steps.changes.outputs.uat_config }}" == "true" ]]; then
             RUN_CHECKOV=true
-          elif [[ "${TARGET_ENVIRONMENT}" == "prod" && "${{ steps.filters.outputs.prod_config }}" == "true" ]]; then
+          elif [[ "${TARGET_ENVIRONMENT}" == "prod" && "${{ steps.changes.outputs.prod_config }}" == "true" ]]; then
             RUN_CHECKOV=true
           fi
 

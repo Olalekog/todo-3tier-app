@@ -156,12 +156,12 @@ jobs:
     needs:
       - resolve_promotion
     outputs:
-      terraform: ${{ steps.filters.outputs.terraform }}
-      sonarqube: ${{ steps.filters.outputs.sonarqube }}
-      trivy: ${{ steps.filters.outputs.trivy }}
-      checkov: ${{ steps.filters.outputs.checkov }}
-      grafana: ${{ steps.filters.outputs.grafana }}
-      prometheus: ${{ steps.filters.outputs.prometheus }}
+      terraform: ${{ steps.changes.outputs.terraform }}
+      sonarqube: ${{ steps.changes.outputs.sonarqube }}
+      trivy: ${{ steps.changes.outputs.trivy }}
+      checkov: ${{ steps.changes.outputs.checkov }}
+      grafana: ${{ steps.changes.outputs.grafana }}
+      prometheus: ${{ steps.changes.outputs.prometheus }}
       run_all: ${{ steps.scope.outputs.run_all }}
       run_sonarqube: ${{ steps.scope.outputs.run_sonarqube }}
       run_trivy: ${{ steps.scope.outputs.run_trivy }}
@@ -172,26 +172,64 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Detect changed paths
-        id: filters
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            terraform:
-              - "terraform/security-tools/deploy/**"
-              - "terraform/templates/user_data_sonarqube.sh.tftpl"
-              - ".github/workflows/security-tools-deploy.yml"
-            sonarqube:
-              - "terraform/security-tools/sonarqube/**"
-            trivy:
-              - "terraform/security-tools/trivy/**"
-            checkov:
-              - "terraform/security-tools/checkov/**"
-            grafana:
-              - "terraform/security-tools/grafana/**"
-            prometheus:
-              - "terraform/security-tools/prometheus/**"
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            CHANGED_FILES=""
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            CHANGED_FILES="$(git diff --name-only "${BASE_SHA}" "${HEAD_SHA}")"
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            BEFORE_SHA="${{ github.event.before }}"
+            if [[ -z "${BEFORE_SHA}" || "${BEFORE_SHA}" =~ ^0+$ ]]; then
+              CHANGED_FILES="$(git diff-tree --no-commit-id --name-only -r "${GITHUB_SHA}")"
+            else
+              CHANGED_FILES="$(git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}")"
+            fi
+          else
+            CHANGED_FILES=""
+          fi
+
+          echo "Changed files:"
+          if [[ -n "${CHANGED_FILES}" ]]; then
+            echo "${CHANGED_FILES}"
+          else
+            echo "None detected for this event."
+          fi
+
+          has_change() {
+            local pattern="$1"
+            grep -Eq "${pattern}" <<<"${CHANGED_FILES}"
+          }
+
+          TERRAFORM=false
+          SONARQUBE=false
+          TRIVY=false
+          CHECKOV=false
+          GRAFANA=false
+          PROMETHEUS=false
+
+          if has_change '^(terraform/security-tools/deploy/|terraform/templates/user_data_sonarqube\.sh\.tftpl$|\.github/workflows/security-tools-deploy\.yml$)'; then TERRAFORM=true; fi
+          if has_change '^terraform/security-tools/sonarqube/'; then SONARQUBE=true; fi
+          if has_change '^terraform/security-tools/trivy/'; then TRIVY=true; fi
+          if has_change '^terraform/security-tools/checkov/'; then CHECKOV=true; fi
+          if has_change '^terraform/security-tools/grafana/'; then GRAFANA=true; fi
+          if has_change '^terraform/security-tools/prometheus/'; then PROMETHEUS=true; fi
+
+          echo "terraform=${TERRAFORM}" >> "$GITHUB_OUTPUT"
+          echo "sonarqube=${SONARQUBE}" >> "$GITHUB_OUTPUT"
+          echo "trivy=${TRIVY}" >> "$GITHUB_OUTPUT"
+          echo "checkov=${CHECKOV}" >> "$GITHUB_OUTPUT"
+          echo "grafana=${GRAFANA}" >> "$GITHUB_OUTPUT"
+          echo "prometheus=${PROMETHEUS}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve workflow scope
         id: scope
@@ -200,7 +238,7 @@ jobs:
           set -euo pipefail
 
           RUN_ALL=false
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.filters.outputs.terraform }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ steps.changes.outputs.terraform }}" == "true" ]]; then
             RUN_ALL=true
           fi
 
@@ -211,23 +249,23 @@ jobs:
           RUN_GRAFANA=false
           RUN_PROMETHEUS=false
 
-          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.sonarqube }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.changes.outputs.sonarqube }}" == "true" ]]; then
             RUN_SONARQUBE=true
           fi
 
-          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.trivy }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.changes.outputs.trivy }}" == "true" ]]; then
             RUN_TRIVY=true
           fi
 
-          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.checkov }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.changes.outputs.checkov }}" == "true" ]]; then
             RUN_CHECKOV=true
           fi
 
-          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.grafana }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.changes.outputs.grafana }}" == "true" ]]; then
             RUN_GRAFANA=true
           fi
 
-          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.filters.outputs.prometheus }}" == "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.changes.outputs.prometheus }}" == "true" ]]; then
             RUN_PROMETHEUS=true
           fi
 
