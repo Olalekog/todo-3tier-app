@@ -20,6 +20,11 @@ resource "aws_db_subnet_group" "this" {
       condition     = alltrue([for subnet in data.aws_subnet.private_db : subnet.vpc_id == var.vpc_id])
       error_message = "All database subnets must belong to the same VPC as the app infrastructure."
     }
+
+    precondition {
+      condition     = length(var.private_db_subnet_vpc_ids) == length(var.private_db_subnet_ids) && alltrue([for vpc_id in var.private_db_subnet_vpc_ids : vpc_id == var.vpc_id])
+      error_message = "Database subnet outputs must come from the same VPC as the app infrastructure."
+    }
   }
 
   tags = merge(var.tags, {

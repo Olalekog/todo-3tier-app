@@ -24,6 +24,11 @@ variable "private_db_subnet_ids" {
   type        = list(string)
 }
 
+variable "private_db_subnet_vpc_ids" {
+  description = "VPC IDs for the private database subnets."
+  type        = list(string)
+}
+
 variable "db_security_group_id" {
   description = "Security group ID attached to the database."
   type        = string
