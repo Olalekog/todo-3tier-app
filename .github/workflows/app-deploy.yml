@@ -1093,6 +1093,9 @@ jobs:
           REGISTRY="\${IMAGE_URI%%/*}"
           aws ecr get-login-password --region "\${AWS_REGION}" | docker login --username AWS --password-stdin "\${REGISTRY}"
           docker pull "\${IMAGE_URI}"
+          systemctl stop frontend-fallback.service >/dev/null 2>&1 || true
+          systemctl disable frontend-fallback.service >/dev/null 2>&1 || true
+          systemctl stop nginx >/dev/null 2>&1 || true
           docker rm -f todo-frontend >/dev/null 2>&1 || true
           docker run -d --name todo-frontend --restart unless-stopped -p 80:80 -e BACKEND_HOST="\${BACKEND_HOST}" "\${IMAGE_URI}"
           docker ps --filter name=todo-frontend
@@ -1114,6 +1117,7 @@ jobs:
       ENVIRONMENT: ${{ needs.resolve_promotion.outputs.target_environment }}
       STATE_KEY: ${{ needs.resolve_promotion.outputs.state_key }}
       TFVARS_FILE: ${{ needs.resolve_promotion.outputs.tfvars_file }}
+      FRONTEND_IMAGE_URI: ${{ needs.docker.outputs.frontend_image_uri }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -1150,16 +1154,98 @@ jobs:
           set -euo pipefail
 
           FRONTEND_URL="$(terraform output -raw frontend_url)"
+          FRONTEND_INSTANCE_ID="$(terraform output -raw frontend_instance_id)"
+          BACKEND_PRIVATE_IP="$(terraform output -raw backend_private_ip)"
           echo "Frontend URL: ${FRONTEND_URL}"
+          RECOVERY_ATTEMPTED=false
+
+          recover_frontend() {
+            local registry
+            local command
+            local parameters
+            local command_id
+            local result
+            local status
+
+            if [[ "${RECOVERY_ATTEMPTED}" == "true" ]]; then
+              return 0
+            fi
+
+            RECOVERY_ATTEMPTED=true
+            registry="${FRONTEND_IMAGE_URI%%/*}"
+            echo "Attempting frontend recovery through SSM."
+
+            command="$(cat <<SCRIPT
+          set -eu
+          AWS_REGION="${AWS_REGION}"
+          IMAGE_URI="${FRONTEND_IMAGE_URI}"
+          BACKEND_HOST="${BACKEND_PRIVATE_IP}"
+          REGISTRY="${registry}"
+          aws ecr get-login-password --region "\${AWS_REGION}" | docker login --username AWS --password-stdin "\${REGISTRY}"
+          docker pull "\${IMAGE_URI}"
+          systemctl stop frontend-fallback.service >/dev/null 2>&1 || true
+          systemctl disable frontend-fallback.service >/dev/null 2>&1 || true
+          systemctl stop nginx >/dev/null 2>&1 || true
+          docker rm -f todo-frontend >/dev/null 2>&1 || true
+          docker run -d --name todo-frontend --restart unless-stopped -p 80:80 -e BACKEND_HOST="\${BACKEND_HOST}" "\${IMAGE_URI}"
+          docker ps --filter name=todo-frontend
+          SCRIPT
+          )"
+
+            parameters="$(jq -n --arg command "${command}" '{commands: [$command], executionTimeout: ["900"]}')"
+            command_id="$(aws ssm send-command \
+              --region "${AWS_REGION}" \
+              --instance-ids "${FRONTEND_INSTANCE_ID}" \
+              --document-name "AWS-RunShellScript" \
+              --comment "Recover frontend container" \
+              --parameters "${parameters}" \
+              --query 'Command.CommandId' \
+              --output text)"
+
+            for attempt in {1..60}; do
+              result="$(aws ssm get-command-invocation \
+                --region "${AWS_REGION}" \
+                --command-id "${command_id}" \
+                --instance-id "${FRONTEND_INSTANCE_ID}" \
+                --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+                --output json)"
+              status="$(jq -r '.Status' <<<"${result}")"
+
+              if [[ "${status}" == "Success" ]]; then
+                echo "${result}"
+                return 0
+              fi
+
+              if [[ "${status}" == "Failed" || "${status}" == "Cancelled" || "${status}" == "TimedOut" || "${status}" == "Cancelling" ]]; then
+                echo "${result}"
+                return 1
+              fi
+
+              sleep 10
+            done
+
+            echo "${result}"
+            return 1
+          }
 
           for i in {1..40}; do
-            if curl -fsS --max-time 10 "${FRONTEND_URL}" >/dev/null; then
-              echo "Frontend HTTP check passed."
-              exit 0
+            BODY="$(curl -fsS --max-time 10 "${FRONTEND_URL}" 2>/dev/null || true)"
+            if [[ -n "${BODY}" ]]; then
+              if grep -q "Todo app is starting" <<<"${BODY}"; then
+                echo "Frontend is still serving the fallback page."
+                recover_frontend || true
+              elif grep -q "3-Tier Todo App\\|3-Tier To-Do App\\|/assets/" <<<"${BODY}"; then
+                echo "Frontend React app check passed."
+                exit 0
+              else
+                echo "Frontend returned HTTP content, but it was not recognized as the React app."
+                echo "${BODY}" | head -c 1000
+                echo
+              fi
             fi
 
             sleep 15
           done
 
-          echo "Frontend did not become reachable in time."
+          echo "Frontend React app did not become reachable in time."
           exit 1
