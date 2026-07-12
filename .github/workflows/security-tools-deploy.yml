@@ -375,6 +375,29 @@ jobs:
             terraform import "${TF_VARS[@]}" "${address}" "${id}"
           }
 
+          tf_var() {
+            local name="$1"
+            terraform console "${TF_VARS[@]}" <<< "var.${name}" | tr -d '"'
+          }
+
+          find_sg_rule_id() {
+            local is_egress="$1"
+            local protocol="$2"
+            local from_port="$3"
+            local to_port="$4"
+            local cidr="$5"
+
+            if [[ -z "${SECURITY_GROUP_ID}" || "${SECURITY_GROUP_ID}" == "None" ]]; then
+              return 0
+            fi
+
+            aws ec2 describe-security-group-rules \
+              --region "${AWS_REGION}" \
+              --filters "Name=group-id,Values=${SECURITY_GROUP_ID}" "Name=is-egress,Values=${is_egress}" \
+              --query "SecurityGroupRules[?IpProtocol=='${protocol}' && FromPort==\`${from_port}\` && ToPort==\`${to_port}\` && CidrIpv4=='${cidr}'].SecurityGroupRuleId | [0]" \
+              --output text 2>/dev/null || true
+          }
+
           ROLE_EXISTS="$(aws iam get-role \
             --role-name "${ROLE_NAME}" \
             --query 'Role.RoleName' \
@@ -411,6 +434,35 @@ jobs:
             import_if_missing 'module.sonarqube_compute[0].aws_iam_role_policy_attachment.ssm' "${ROLE_NAME}/${SSM_POLICY_ARN}"
           fi
           import_if_missing 'module.security_groups.aws_security_group.sonarqube[0]' "${SECURITY_GROUP_ID}"
+
+          if [[ -n "${SECURITY_GROUP_ID}" && "${SECURITY_GROUP_ID}" != "None" ]]; then
+            TCP_PROTOCOL="$(tf_var tcp_protocol)"
+            ALLOWED_SSH_CIDR="$(tf_var allowed_ssh_cidr)"
+            SECURITY_TOOLS_OUTBOUND_CIDR="$(tf_var security_tools_outbound_cidr_ipv4)"
+            SONARQUBE_PORT="$(tf_var sonarqube_port)"
+            GRAFANA_PORT="$(tf_var grafana_port)"
+            PROMETHEUS_PORT="$(tf_var prometheus_port)"
+            TRIVY_PORT="$(tf_var trivy_port)"
+            SSH_PORT="$(tf_var ssh_port)"
+            OUTBOUND_HTTP_PORT="$(tf_var outbound_http_port)"
+            OUTBOUND_HTTPS_PORT="$(tf_var outbound_https_port)"
+
+            import_if_missing 'module.security_groups.aws_vpc_security_group_ingress_rule.sonarqube_web[0]' \
+              "$(find_sg_rule_id false "${TCP_PROTOCOL}" "${SONARQUBE_PORT}" "${SONARQUBE_PORT}" "${ALLOWED_SSH_CIDR}")"
+            import_if_missing 'module.security_groups.aws_vpc_security_group_ingress_rule.sonarqube_grafana[0]' \
+              "$(find_sg_rule_id false "${TCP_PROTOCOL}" "${GRAFANA_PORT}" "${GRAFANA_PORT}" "${ALLOWED_SSH_CIDR}")"
+            import_if_missing 'module.security_groups.aws_vpc_security_group_ingress_rule.sonarqube_prometheus[0]' \
+              "$(find_sg_rule_id false "${TCP_PROTOCOL}" "${PROMETHEUS_PORT}" "${PROMETHEUS_PORT}" "${ALLOWED_SSH_CIDR}")"
+            import_if_missing 'module.security_groups.aws_vpc_security_group_ingress_rule.sonarqube_trivy[0]' \
+              "$(find_sg_rule_id false "${TCP_PROTOCOL}" "${TRIVY_PORT}" "${TRIVY_PORT}" "${ALLOWED_SSH_CIDR}")"
+            import_if_missing 'module.security_groups.aws_vpc_security_group_ingress_rule.sonarqube_ssh[0]' \
+              "$(find_sg_rule_id false "${TCP_PROTOCOL}" "${SSH_PORT}" "${SSH_PORT}" "${ALLOWED_SSH_CIDR}")"
+            import_if_missing 'module.security_groups.aws_vpc_security_group_egress_rule.sonarqube_http_outbound[0]' \
+              "$(find_sg_rule_id true "${TCP_PROTOCOL}" "${OUTBOUND_HTTP_PORT}" "${OUTBOUND_HTTP_PORT}" "${SECURITY_TOOLS_OUTBOUND_CIDR}")"
+            import_if_missing 'module.security_groups.aws_vpc_security_group_egress_rule.sonarqube_https_outbound[0]' \
+              "$(find_sg_rule_id true "${TCP_PROTOCOL}" "${OUTBOUND_HTTPS_PORT}" "${OUTBOUND_HTTPS_PORT}" "${SECURITY_TOOLS_OUTBOUND_CIDR}")"
+          fi
+
           import_if_missing 'module.sonarqube_compute[0].aws_instance.this' "${INSTANCE_ID}"
 
       - name: Terraform plan
