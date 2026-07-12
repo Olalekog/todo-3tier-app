@@ -1,0 +1,13 @@
+@app.get("/todos/search")
+def search_todos(q: str):
+    query = f"SELECT * FROM todos WHERE title = '{q}'"
+    cursor.execute(query)
+    return cursor.fetchall()
+	
+	
+
+function TodoItem({ todo }) {
+  return (
+    <div dangerouslySetInnerHTML={{ __html: todo.title }} />
+  );
+}
