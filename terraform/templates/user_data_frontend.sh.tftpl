@@ -230,7 +230,7 @@ if [[ "$${IMAGE_READY}" == "true" ]]; then
   fi
 
   systemctl stop nginx
-  if docker run -d --name "$${CONTAINER_NAME}" --restart unless-stopped -p 80:80 -e BACKEND_HOST="$${BACKEND_HOST}" "$${IMAGE_URI}"; then
+  if docker run -d --name "$${CONTAINER_NAME}" --restart unless-stopped -p 80:8080 -e BACKEND_HOST="$${BACKEND_HOST}" "$${IMAGE_URI}"; then
     echo "Frontend application container started."
   else
     echo "WARNING: Frontend application container failed to start. Restoring system Nginx fallback page."

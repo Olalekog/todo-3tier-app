@@ -1097,7 +1097,7 @@ jobs:
           systemctl disable frontend-fallback.service >/dev/null 2>&1 || true
           systemctl stop nginx >/dev/null 2>&1 || true
           docker rm -f todo-frontend >/dev/null 2>&1 || true
-          docker run -d --name todo-frontend --restart unless-stopped -p 80:80 -e BACKEND_HOST="\${BACKEND_HOST}" "\${IMAGE_URI}"
+          docker run -d --name todo-frontend --restart unless-stopped -p 80:8080 -e BACKEND_HOST="\${BACKEND_HOST}" "\${IMAGE_URI}"
           docker ps --filter name=todo-frontend
           SCRIPT
           )"
@@ -1187,7 +1187,7 @@ jobs:
           systemctl disable frontend-fallback.service >/dev/null 2>&1 || true
           systemctl stop nginx >/dev/null 2>&1 || true
           docker rm -f todo-frontend >/dev/null 2>&1 || true
-          docker run -d --name todo-frontend --restart unless-stopped -p 80:80 -e BACKEND_HOST="\${BACKEND_HOST}" "\${IMAGE_URI}"
+          docker run -d --name todo-frontend --restart unless-stopped -p 80:8080 -e BACKEND_HOST="\${BACKEND_HOST}" "\${IMAGE_URI}"
           docker ps --filter name=todo-frontend
           SCRIPT
           )"

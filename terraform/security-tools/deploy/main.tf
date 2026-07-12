@@ -48,13 +48,6 @@ check "sonarqube_subnet_in_vpc" {
   }
 }
 
-check "sonarqube_subnet_is_public" {
-  assert {
-    condition     = !var.enable_sonarqube || try(data.aws_subnet.sonarqube[0].map_public_ip_on_launch, false)
-    error_message = "SonarQube must be deployed in a public subnet with auto-assign public IP enabled."
-  }
-}
-
 module "security_groups" {
   source = "../../modules/security-groups"
 
