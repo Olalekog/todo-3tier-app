@@ -10,6 +10,14 @@ resource "aws_security_group" "frontend" {
   description = "Frontend security group"
   vpc_id      = var.vpc_id
 
+  ingress {
+    description = "Allow HTTP to frontend"
+    from_port   = var.frontend_http_port
+    to_port     = var.frontend_http_port
+    protocol    = var.tcp_protocol
+    cidr_blocks = [var.allowed_http_cidr]
+  }
+
   tags = merge(var.tags, {
     Name = "${var.project_name}-${var.environment}-frontend-sg"
     Tier = "frontend"
@@ -23,6 +31,14 @@ resource "aws_security_group" "backend" {
   description = "Backend security group"
   vpc_id      = var.vpc_id
 
+  ingress {
+    description     = "Allow frontend to backend API"
+    from_port       = var.backend_api_port
+    to_port         = var.backend_api_port
+    protocol        = var.tcp_protocol
+    security_groups = [aws_security_group.frontend[0].id]
+  }
+
   tags = merge(var.tags, {
     Name = "${var.project_name}-${var.environment}-backend-sg"
     Tier = "backend"
@@ -35,6 +51,14 @@ resource "aws_security_group" "database" {
   name        = "${var.project_name}-${var.environment}-database-sg"
   description = "Database security group"
   vpc_id      = var.vpc_id
+
+  ingress {
+    description     = "Allow MySQL from backend security group"
+    from_port       = var.database_port
+    to_port         = var.database_port
+    protocol        = var.tcp_protocol
+    security_groups = [aws_security_group.backend[0].id]
+  }
 
   tags = merge(var.tags, {
     Name = "${var.project_name}-${var.environment}-database-sg"
@@ -111,17 +135,6 @@ resource "aws_security_group" "sonarqube" {
   })
 }
 
-resource "aws_vpc_security_group_ingress_rule" "frontend_http" {
-  count = var.enable_frontend ? 1 : 0
-
-  security_group_id = aws_security_group.frontend[0].id
-  description       = "Allow HTTP to frontend"
-  from_port         = var.frontend_http_port
-  to_port           = var.frontend_http_port
-  ip_protocol       = var.tcp_protocol
-  cidr_ipv4         = var.allowed_http_cidr
-}
-
 resource "aws_vpc_security_group_egress_rule" "frontend_to_backend_api" {
   count = var.enable_frontend && var.enable_backend ? 1 : 0
 
@@ -155,17 +168,6 @@ resource "aws_vpc_security_group_egress_rule" "frontend_https_outbound" {
   cidr_ipv4         = var.app_outbound_cidr_ipv4
 }
 
-resource "aws_vpc_security_group_ingress_rule" "backend_from_frontend_api" {
-  count = var.enable_frontend && var.enable_backend ? 1 : 0
-
-  security_group_id            = aws_security_group.backend[0].id
-  description                  = "Allow frontend to backend API"
-  from_port                    = var.backend_api_port
-  to_port                      = var.backend_api_port
-  ip_protocol                  = var.tcp_protocol
-  referenced_security_group_id = aws_security_group.frontend[0].id
-}
-
 resource "aws_vpc_security_group_egress_rule" "backend_to_database_mysql" {
   count = var.enable_backend && var.enable_database ? 1 : 0
 
@@ -197,15 +199,4 @@ resource "aws_vpc_security_group_egress_rule" "backend_https_outbound" {
   to_port           = var.outbound_https_port
   ip_protocol       = var.tcp_protocol
   cidr_ipv4         = var.app_outbound_cidr_ipv4
-}
-
-resource "aws_vpc_security_group_ingress_rule" "database_from_backend_mysql" {
-  count = var.enable_backend && var.enable_database ? 1 : 0
-
-  security_group_id            = aws_security_group.database[0].id
-  description                  = "Allow MySQL from backend security group"
-  from_port                    = var.database_port
-  to_port                      = var.database_port
-  ip_protocol                  = var.tcp_protocol
-  referenced_security_group_id = aws_security_group.backend[0].id
 }
