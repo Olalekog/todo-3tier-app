@@ -58,16 +58,30 @@ check "sonarqube_subnet_is_public" {
 module "security_groups" {
   source = "../../modules/security-groups"
 
-  project_name           = var.project_name
-  environment            = var.environment
-  vpc_id                 = var.vpc_id
-  allowed_ssh_cidr       = var.allowed_ssh_cidr
-  sonarqube_allowed_cidr = var.allowed_ssh_cidr
-  enable_frontend        = false
-  enable_backend         = false
-  enable_database        = false
-  enable_sonarqube       = var.enable_sonarqube
-  tags                   = var.tags
+  project_name                      = var.project_name
+  environment                       = var.environment
+  vpc_id                            = var.vpc_id
+  allowed_http_cidr                 = var.allowed_http_cidr
+  allowed_ssh_cidr                  = var.allowed_ssh_cidr
+  sonarqube_allowed_cidr            = var.allowed_ssh_cidr
+  tcp_protocol                      = var.tcp_protocol
+  frontend_http_port                = var.frontend_http_port
+  backend_api_port                  = var.backend_api_port
+  database_port                     = var.database_port
+  outbound_http_port                = var.outbound_http_port
+  outbound_https_port               = var.outbound_https_port
+  app_outbound_cidr_ipv4            = var.app_outbound_cidr_ipv4
+  sonarqube_port                    = var.sonarqube_port
+  grafana_port                      = var.grafana_port
+  prometheus_port                   = var.prometheus_port
+  trivy_port                        = var.trivy_port
+  ssh_port                          = var.ssh_port
+  security_tools_outbound_cidr_ipv4 = var.security_tools_outbound_cidr_ipv4
+  enable_frontend                   = false
+  enable_backend                    = false
+  enable_database                   = false
+  enable_sonarqube                  = var.enable_sonarqube
+  tags                              = var.tags
 }
 
 module "sonarqube_compute" {

@@ -96,13 +96,26 @@ module "ecr" {
 module "security_groups" {
   source = "./modules/security-groups"
 
-  project_name                = var.project_name
-  environment                 = var.environment
-  vpc_id                      = module.network.vpc_id
-  allowed_http_cidr           = var.allowed_http_cidr
-  allowed_ssh_cidr            = var.allowed_ssh_cidr
-  backend_allowed_cidr_blocks = length(var.backend_allowed_cidr_blocks) > 0 ? var.backend_allowed_cidr_blocks : var.private_app_subnet_cidrs
-  tags                        = local.common_tags
+  project_name                      = var.project_name
+  environment                       = var.environment
+  vpc_id                            = module.network.vpc_id
+  allowed_http_cidr                 = var.allowed_http_cidr
+  allowed_ssh_cidr                  = var.allowed_ssh_cidr
+  backend_allowed_cidr_blocks       = length(var.backend_allowed_cidr_blocks) > 0 ? var.backend_allowed_cidr_blocks : var.private_app_subnet_cidrs
+  tcp_protocol                      = var.tcp_protocol
+  frontend_http_port                = var.frontend_http_port
+  backend_api_port                  = var.backend_api_port
+  database_port                     = var.database_port
+  outbound_http_port                = var.outbound_http_port
+  outbound_https_port               = var.outbound_https_port
+  app_outbound_cidr_ipv4            = var.app_outbound_cidr_ipv4
+  sonarqube_port                    = var.sonarqube_port
+  grafana_port                      = var.grafana_port
+  prometheus_port                   = var.prometheus_port
+  trivy_port                        = var.trivy_port
+  ssh_port                          = var.ssh_port
+  security_tools_outbound_cidr_ipv4 = var.security_tools_outbound_cidr_ipv4
+  tags                              = local.common_tags
 }
 
 module "database" {

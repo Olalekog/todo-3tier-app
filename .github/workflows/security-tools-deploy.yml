@@ -355,7 +355,6 @@ jobs:
             -var="environment=${ENVIRONMENT}"
             -var="vpc_id=${VPC_ID}"
             -var="sonarqube_subnet_id=${SUBNET_ID}"
-            -var="allowed_ssh_cidr=0.0.0.0/0"
             -var="user_data_template_path=${USER_DATA_TEMPLATE_PATH}"
           )
 
@@ -430,7 +429,6 @@ jobs:
             -var="environment=${ENVIRONMENT}" \
             -var="vpc_id=${VPC_ID}" \
             -var="sonarqube_subnet_id=${SUBNET_ID}" \
-            -var="allowed_ssh_cidr=0.0.0.0/0" \
             -var="user_data_template_path=${USER_DATA_TEMPLATE_PATH}" \
             -out=security-tools.tfplan
 

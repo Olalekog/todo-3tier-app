@@ -62,19 +62,82 @@ variable "key_name" {
 variable "allowed_http_cidr" {
   description = "CIDR block allowed to access frontend HTTP."
   type        = string
-  default     = "0.0.0.0/0"
 }
 
 variable "allowed_ssh_cidr" {
   description = "CIDR block allowed to access EC2 instances over SSH."
   type        = string
-  default     = "0.0.0.0/0"
 }
 
 variable "backend_allowed_cidr_blocks" {
   description = "CIDR blocks allowed to access backend port 8000."
   type        = list(string)
   default     = []
+}
+
+variable "tcp_protocol" {
+  description = "IP protocol used by TCP security group rules."
+  type        = string
+}
+
+variable "frontend_http_port" {
+  description = "Frontend HTTP listener port."
+  type        = number
+}
+
+variable "backend_api_port" {
+  description = "Backend API listener port."
+  type        = number
+}
+
+variable "database_port" {
+  description = "Database listener port."
+  type        = number
+}
+
+variable "outbound_http_port" {
+  description = "HTTP outbound port for package repositories and public HTTP endpoints."
+  type        = number
+}
+
+variable "outbound_https_port" {
+  description = "HTTPS outbound port for ECR, SSM, package downloads, and updates."
+  type        = number
+}
+
+variable "app_outbound_cidr_ipv4" {
+  description = "IPv4 CIDR allowed for application outbound HTTP and HTTPS dependencies."
+  type        = string
+}
+
+variable "sonarqube_port" {
+  description = "SonarQube web UI port."
+  type        = number
+}
+
+variable "grafana_port" {
+  description = "Grafana web UI port."
+  type        = number
+}
+
+variable "prometheus_port" {
+  description = "Prometheus web UI port."
+  type        = number
+}
+
+variable "trivy_port" {
+  description = "Trivy server API port."
+  type        = number
+}
+
+variable "ssh_port" {
+  description = "SSH management port."
+  type        = number
+}
+
+variable "security_tools_outbound_cidr_ipv4" {
+  description = "IPv4 CIDR allowed for security tools outbound HTTP and HTTPS dependencies."
+  type        = string
 }
 
 variable "db_name" {
