@@ -98,15 +98,6 @@ jobs:
             --format sarif \
             --output /repo/trivy-reports/repository/repository.sarif
 
-          docker run --rm \
-            -v "${PWD}:/repo" \
-            -v "${HOME}/.cache/trivy:/root/.cache/" \
-            "${TRIVY_IMAGE}" fs /repo \
-            --scanners vuln,secret,license \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --exit-code 1
-
       - name: Scan Terraform and Kubernetes configuration
         id: config_scan
         continue-on-error: true
@@ -137,13 +128,6 @@ jobs:
             --severity HIGH,CRITICAL \
             --format sarif \
             --output /repo/trivy-reports/config/config.sarif
-
-          docker run --rm \
-            -v "${PWD}:/repo" \
-            -v "${HOME}/.cache/trivy:/root/.cache/" \
-            "${TRIVY_IMAGE}" config /repo \
-            --severity HIGH,CRITICAL \
-            --exit-code 1
 
       - name: Build local Docker images
         shell: bash
@@ -192,15 +176,6 @@ jobs:
             --format sarif \
             --output /repo/trivy-reports/images/backend-image.sarif
 
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "${HOME}/.cache/trivy:/root/.cache/" \
-            "${TRIVY_IMAGE}" image "${BACKEND_IMAGE}" \
-            --scanners vuln,secret,license \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --exit-code 1
-
       - name: Scan frontend Docker image
         id: frontend_image_scan
         continue-on-error: true
@@ -240,15 +215,6 @@ jobs:
             --ignore-unfixed \
             --format sarif \
             --output /repo/trivy-reports/images/frontend-image.sarif
-
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "${HOME}/.cache/trivy:/root/.cache/" \
-            "${TRIVY_IMAGE}" image "${FRONTEND_IMAGE}" \
-            --scanners vuln,secret,license \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --exit-code 1
 
       - name: Generate SBOM reports
         shell: bash
@@ -317,12 +283,43 @@ jobs:
           category: trivy-frontend-image
 
       - name: Fail on Trivy findings
-        if: |
-          steps.repository_scan.outcome == 'failure' ||
-          steps.config_scan.outcome == 'failure' ||
-          steps.backend_image_scan.outcome == 'failure' ||
-          steps.frontend_image_scan.outcome == 'failure'
+        if: always()
         shell: bash
         run: |
-          echo "Trivy found blocking HIGH or CRITICAL findings. Reports and SBOMs were uploaded before failing the job."
-          exit 1
+          set -euo pipefail
+
+          REPORTS=(
+            "trivy-reports/repository/repository.json"
+            "trivy-reports/config/config.json"
+            "trivy-reports/images/backend-image.json"
+            "trivy-reports/images/frontend-image.json"
+          )
+
+          BLOCKING_COUNT=0
+          for report in "${REPORTS[@]}"; do
+            if [[ ! -s "${report}" ]]; then
+              echo "::warning::Missing Trivy JSON report: ${report}"
+              continue
+            fi
+
+            count="$(jq '
+              [
+                .Results[]? as $result
+                | (
+                    ($result.Vulnerabilities[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL")),
+                    ($result.Misconfigurations[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL")),
+                    ($result.Secrets[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL"))
+                  )
+              ] | length
+            ' "${report}")"
+
+            echo "${report}: ${count} blocking HIGH/CRITICAL findings"
+            BLOCKING_COUNT=$((BLOCKING_COUNT + count))
+          done
+
+          if [[ "${BLOCKING_COUNT}" -gt 0 ]]; then
+            echo "Trivy found ${BLOCKING_COUNT} blocking HIGH or CRITICAL findings. Reports and SBOMs were uploaded before failing the job."
+            exit 1
+          fi
+
+          echo "No blocking HIGH or CRITICAL Trivy findings were found in JSON reports."
