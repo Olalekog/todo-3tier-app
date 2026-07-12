@@ -155,13 +155,13 @@ variable "checkov_image" {
 variable "prometheus_image" {
   description = "Prometheus container image to run on the SonarQube EC2 instance."
   type        = string
-  default     = "prom/prometheus:latest"
+  default     = "prom/prometheus:v2.55.1"
 }
 
 variable "grafana_image" {
   description = "Grafana container image to run on the SonarQube EC2 instance."
   type        = string
-  default     = "grafana/grafana-oss:latest"
+  default     = "grafana/grafana-oss:11.4.0"
 }
 
 variable "user_data_template_path" {

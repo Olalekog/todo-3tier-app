@@ -59,8 +59,8 @@ env:
   TRIVY_IMAGE: aquasec/trivy:latest
   CHECKOV_IMAGE: bridgecrew/checkov:latest
   SONARQUBE_IMAGE: sonarqube:community
-  PROMETHEUS_IMAGE: prom/prometheus:latest
-  GRAFANA_IMAGE: grafana/grafana-oss:latest
+  PROMETHEUS_IMAGE: prom/prometheus:v2.55.1
+  GRAFANA_IMAGE: grafana/grafana-oss:11.4.0
   TFVARS_FILE: scurity-tools.tfvars
   USER_DATA_TEMPLATE_PATH: ../../templates/user_data_sonarqube.sh.tftpl
 

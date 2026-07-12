@@ -23,6 +23,6 @@ sonarqube_image = "sonarqube:community"
 trivy_image     = "aquasec/trivy:latest"
 checkov_image   = "bridgecrew/checkov:latest"
 
-# Optional monitoring containers.
-# prometheus_image = "prom/prometheus:latest"
-# grafana_image    = "grafana/grafana-oss:latest"
+# Monitoring containers.
+prometheus_image = "prom/prometheus:v2.55.1"
+grafana_image    = "grafana/grafana-oss:11.4.0"
