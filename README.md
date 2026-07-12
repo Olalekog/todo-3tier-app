@@ -196,16 +196,18 @@ flowchart TD
     Trigger[Push to dev, PR promotion, or manual dispatch] --> Resolve[Resolve Promotion and Changes]
     Resolve -->|run_sonarqube=true| Sonar[SonarQube Scan<br/>quality gate waits]
     Resolve -->|run_checkov=true| Checkov[Checkov IaC Scan<br/>CLI/SARIF/JSON reports]
-    Sonar --> Docker[Build, Test and Push Image]
+    Sonar --> Docker[Build, Scan and Push Image]
     Checkov --> Docker
     Resolve --> Docker
-    Docker -->|changed frontend only| FrontendImage[Build/push frontend image]
-    Docker -->|changed backend only| BackendImage[Build/push backend image]
+    Docker -->|changed frontend only| FrontendImage[Build frontend image locally]
+    Docker -->|changed backend only| BackendImage[Build backend image locally]
     Docker -->|unchanged app image| LastImage[Reuse latest image in ECR]
-    FrontendImage --> Trivy[Trivy Image Scan<br/>table/SARIF/JSON reports]
+    FrontendImage --> Trivy[Trivy pre-push image scan<br/>table/SARIF/JSON reports]
     BackendImage --> Trivy
+    Trivy -->|scan passed| Push[Push scanned image to ECR]
+    Trivy -->|scan failed| Block[Block image push]
     LastImage --> Plan[Terraform Plan]
-    Trivy --> Plan
+    Push --> Plan
     Plan -->|apply action| Apply[Terraform Apply]
     Apply --> DeployContainers[Deploy changed containers through SSM]
     DeployContainers --> Verify[Verify frontend URL]
@@ -234,8 +236,8 @@ Manual workflow dispatch can run plan or apply, but it does not force a new fron
 | Resolve Promotion and Changes | Validates branch promotion rules and computes build/scan flags |
 | SonarQube Scan | Runs code quality scan and blocks on quality gate |
 | Checkov IaC Scan | Scans Terraform, uploads artifact and SARIF, then enforces gate |
-| Build, Test and Push Image | Resolves ECR repos, builds changed images, reuses latest unchanged images |
-| Trivy Image Scan | Scans changed container images and uploads artifact and SARIF |
+| Build, Scan and Push Image | Resolves ECR repos, builds changed images, scans them locally with Trivy, then pushes only passing images |
+| Trivy pre-push image scan | Uploads image scan artifact and SARIF before allowing ECR push |
 | Terraform Plan | Initializes app state and creates `app.tfplan` |
 | Prod Approval | Requires GitHub Environment approval for prod apply |
 | Terraform Apply | Applies the saved Terraform plan |
@@ -490,7 +492,7 @@ The workflow skips `CKV2_AWS_11` for VPC flow logs by design:
 
 ### Trivy
 
-Trivy scans changed container images only.
+Trivy scans changed container images before they are pushed to ECR.
 
 Generated files:
 
@@ -511,7 +513,7 @@ Uploads:
 | Backend SARIF | GitHub Code Scanning category `trivy-backend-image-<env>` |
 | Frontend SARIF | GitHub Code Scanning category `trivy-frontend-image-<env>` |
 
-Trivy fails the deployment when HIGH or CRITICAL vulnerabilities are found after reports have been uploaded.
+Trivy uploads reports first, then blocks the ECR push and deployment when HIGH or CRITICAL vulnerabilities are found.
 
 ## ECR Image Strategy
 

@@ -1,0 +1,328 @@
+name: Trivy Security Scan
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - ".github/workflows/trivy.yml"
+      - "backend/**"
+      - "frontend/**"
+      - "terraform/**"
+      - "**/package-lock.json"
+      - "**/requirements.txt"
+      - "**/Dockerfile"
+      - "**/*.tf"
+      - "**/*.yml"
+      - "**/*.yaml"
+      - "**/*.json"
+  pull_request:
+    branches:
+      - uat
+      - prod
+    paths:
+      - ".github/workflows/trivy.yml"
+      - "backend/**"
+      - "frontend/**"
+      - "terraform/**"
+      - "**/package-lock.json"
+      - "**/requirements.txt"
+      - "**/Dockerfile"
+      - "**/*.tf"
+      - "**/*.yml"
+      - "**/*.yaml"
+      - "**/*.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: trivy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TRIVY_IMAGE: aquasec/trivy:latest
+  FRONTEND_IMAGE: react-js-application/todo-frontend:${{ github.sha }}
+  BACKEND_IMAGE: react-js-application/todo-backend:${{ github.sha }}
+
+jobs:
+  trivy:
+    name: Trivy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare report directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p trivy-reports/{repository,config,images,sbom}
+
+      - name: Scan application repository
+        id: repository_scan
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            "${TRIVY_IMAGE}" fs /repo \
+            --scanners vuln,secret,license \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format table \
+            --output /repo/trivy-reports/repository/repository-table.txt
+
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            "${TRIVY_IMAGE}" fs /repo \
+            --scanners vuln,secret,license \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format json \
+            --output /repo/trivy-reports/repository/repository.json
+
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            "${TRIVY_IMAGE}" fs /repo \
+            --scanners vuln,secret,license \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format sarif \
+            --output /repo/trivy-reports/repository/repository.sarif
+
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            "${TRIVY_IMAGE}" fs /repo \
+            --scanners vuln,secret,license \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1
+
+      - name: Scan Terraform and Kubernetes configuration
+        id: config_scan
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            "${TRIVY_IMAGE}" config /repo \
+            --severity HIGH,CRITICAL \
+            --format table \
+            --output /repo/trivy-reports/config/config-table.txt
+
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            "${TRIVY_IMAGE}" config /repo \
+            --severity HIGH,CRITICAL \
+            --format json \
+            --output /repo/trivy-reports/config/config.json
+
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            "${TRIVY_IMAGE}" config /repo \
+            --severity HIGH,CRITICAL \
+            --format sarif \
+            --output /repo/trivy-reports/config/config.sarif
+
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            "${TRIVY_IMAGE}" config /repo \
+            --severity HIGH,CRITICAL \
+            --exit-code 1
+
+      - name: Build local Docker images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -t "${BACKEND_IMAGE}" backend
+          docker build -t "${FRONTEND_IMAGE}" frontend
+
+      - name: Scan backend Docker image
+        id: backend_image_scan
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            "${TRIVY_IMAGE}" image "${BACKEND_IMAGE}" \
+            --scanners vuln,secret,license \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format table \
+            --output /repo/trivy-reports/images/backend-image-table.txt
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            "${TRIVY_IMAGE}" image "${BACKEND_IMAGE}" \
+            --scanners vuln,secret,license \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format json \
+            --output /repo/trivy-reports/images/backend-image.json
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            "${TRIVY_IMAGE}" image "${BACKEND_IMAGE}" \
+            --scanners vuln,secret,license \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format sarif \
+            --output /repo/trivy-reports/images/backend-image.sarif
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            "${TRIVY_IMAGE}" image "${BACKEND_IMAGE}" \
+            --scanners vuln,secret,license \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1
+
+      - name: Scan frontend Docker image
+        id: frontend_image_scan
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            "${TRIVY_IMAGE}" image "${FRONTEND_IMAGE}" \
+            --scanners vuln,secret,license \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format table \
+            --output /repo/trivy-reports/images/frontend-image-table.txt
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            "${TRIVY_IMAGE}" image "${FRONTEND_IMAGE}" \
+            --scanners vuln,secret,license \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format json \
+            --output /repo/trivy-reports/images/frontend-image.json
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            "${TRIVY_IMAGE}" image "${FRONTEND_IMAGE}" \
+            --scanners vuln,secret,license \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format sarif \
+            --output /repo/trivy-reports/images/frontend-image.sarif
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            "${TRIVY_IMAGE}" image "${FRONTEND_IMAGE}" \
+            --scanners vuln,secret,license \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1
+
+      - name: Generate SBOM reports
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            "${TRIVY_IMAGE}" fs /repo \
+            --format cyclonedx \
+            --output /repo/trivy-reports/sbom/repository-cyclonedx.json
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            "${TRIVY_IMAGE}" image "${BACKEND_IMAGE}" \
+            --format cyclonedx \
+            --output /repo/trivy-reports/sbom/backend-image-cyclonedx.json
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${HOME}/.cache/trivy:/root/.cache/" \
+            -v "${PWD}:/repo" \
+            "${TRIVY_IMAGE}" image "${FRONTEND_IMAGE}" \
+            --format cyclonedx \
+            --output /repo/trivy-reports/sbom/frontend-image-cyclonedx.json
+
+          find trivy-reports -type f -print
+
+      - name: Upload Trivy reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-security-reports
+          path: trivy-reports/
+          if-no-files-found: warn
+
+      - name: Upload repository SARIF
+        if: always() && hashFiles('trivy-reports/repository/repository.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-reports/repository/repository.sarif
+          category: trivy-repository
+
+      - name: Upload config SARIF
+        if: always() && hashFiles('trivy-reports/config/config.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-reports/config/config.sarif
+          category: trivy-config
+
+      - name: Upload backend image SARIF
+        if: always() && hashFiles('trivy-reports/images/backend-image.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-reports/images/backend-image.sarif
+          category: trivy-backend-image
+
+      - name: Upload frontend image SARIF
+        if: always() && hashFiles('trivy-reports/images/frontend-image.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-reports/images/frontend-image.sarif
+          category: trivy-frontend-image
+
+      - name: Fail on Trivy findings
+        if: |
+          steps.repository_scan.outcome == 'failure' ||
+          steps.config_scan.outcome == 'failure' ||
+          steps.backend_image_scan.outcome == 'failure' ||
+          steps.frontend_image_scan.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "Trivy found blocking HIGH or CRITICAL findings. Reports and SBOMs were uploaded before failing the job."
+          exit 1

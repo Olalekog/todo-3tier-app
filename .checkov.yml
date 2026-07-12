@@ -3,6 +3,9 @@ directory:
 
 framework:
   - terraform
+  - dockerfile
+  - github_actions
+  - secrets
 
 download-external-modules: true
 
