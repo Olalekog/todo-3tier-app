@@ -49,6 +49,62 @@ resource "aws_security_group" "sonarqube" {
   description = "SonarQube security group"
   vpc_id      = var.vpc_id
 
+  ingress {
+    description = "SonarQube web UI from allowed CIDR"
+    from_port   = var.sonarqube_port
+    to_port     = var.sonarqube_port
+    protocol    = var.tcp_protocol
+    cidr_blocks = [local.sonarqube_allowed_cidr]
+  }
+
+  ingress {
+    description = "Grafana web UI from allowed CIDR"
+    from_port   = var.grafana_port
+    to_port     = var.grafana_port
+    protocol    = var.tcp_protocol
+    cidr_blocks = [local.sonarqube_allowed_cidr]
+  }
+
+  ingress {
+    description = "Prometheus web UI from allowed CIDR"
+    from_port   = var.prometheus_port
+    to_port     = var.prometheus_port
+    protocol    = var.tcp_protocol
+    cidr_blocks = [local.sonarqube_allowed_cidr]
+  }
+
+  ingress {
+    description = "Trivy server API from allowed CIDR"
+    from_port   = var.trivy_port
+    to_port     = var.trivy_port
+    protocol    = var.tcp_protocol
+    cidr_blocks = [local.sonarqube_allowed_cidr]
+  }
+
+  ingress {
+    description = "SSH from allowed CIDR"
+    from_port   = var.ssh_port
+    to_port     = var.ssh_port
+    protocol    = var.tcp_protocol
+    cidr_blocks = [local.sonarqube_allowed_cidr]
+  }
+
+  egress {
+    description = "Allow security tools package repository HTTP access"
+    from_port   = var.outbound_http_port
+    to_port     = var.outbound_http_port
+    protocol    = var.tcp_protocol
+    cidr_blocks = [var.security_tools_outbound_cidr_ipv4]
+  }
+
+  egress {
+    description = "Allow security tools HTTPS access for image pulls and updates"
+    from_port   = var.outbound_https_port
+    to_port     = var.outbound_https_port
+    protocol    = var.tcp_protocol
+    cidr_blocks = [var.security_tools_outbound_cidr_ipv4]
+  }
+
   tags = merge(var.tags, {
     Name = "${var.project_name}-${var.environment}-sonarqube-sg"
     Tier = "tools"
@@ -152,81 +208,4 @@ resource "aws_vpc_security_group_ingress_rule" "database_from_backend_mysql" {
   to_port                      = var.database_port
   ip_protocol                  = var.tcp_protocol
   referenced_security_group_id = aws_security_group.backend[0].id
-}
-
-resource "aws_vpc_security_group_ingress_rule" "sonarqube_web" {
-  count = var.enable_sonarqube ? 1 : 0
-
-  security_group_id = aws_security_group.sonarqube[0].id
-  description       = "SonarQube web UI from allowed CIDR"
-  from_port         = var.sonarqube_port
-  to_port           = var.sonarqube_port
-  ip_protocol       = var.tcp_protocol
-  cidr_ipv4         = local.sonarqube_allowed_cidr
-}
-
-resource "aws_vpc_security_group_ingress_rule" "sonarqube_grafana" {
-  count = var.enable_sonarqube ? 1 : 0
-
-  security_group_id = aws_security_group.sonarqube[0].id
-  description       = "Grafana web UI from allowed CIDR"
-  from_port         = var.grafana_port
-  to_port           = var.grafana_port
-  ip_protocol       = var.tcp_protocol
-  cidr_ipv4         = local.sonarqube_allowed_cidr
-}
-
-resource "aws_vpc_security_group_ingress_rule" "sonarqube_prometheus" {
-  count = var.enable_sonarqube ? 1 : 0
-
-  security_group_id = aws_security_group.sonarqube[0].id
-  description       = "Prometheus web UI from allowed CIDR"
-  from_port         = var.prometheus_port
-  to_port           = var.prometheus_port
-  ip_protocol       = var.tcp_protocol
-  cidr_ipv4         = local.sonarqube_allowed_cidr
-}
-
-resource "aws_vpc_security_group_ingress_rule" "sonarqube_trivy" {
-  count = var.enable_sonarqube ? 1 : 0
-
-  security_group_id = aws_security_group.sonarqube[0].id
-  description       = "Trivy server API from allowed CIDR"
-  from_port         = var.trivy_port
-  to_port           = var.trivy_port
-  ip_protocol       = var.tcp_protocol
-  cidr_ipv4         = local.sonarqube_allowed_cidr
-}
-
-resource "aws_vpc_security_group_ingress_rule" "sonarqube_ssh" {
-  count = var.enable_sonarqube ? 1 : 0
-
-  security_group_id = aws_security_group.sonarqube[0].id
-  description       = "SSH from allowed CIDR"
-  from_port         = var.ssh_port
-  to_port           = var.ssh_port
-  ip_protocol       = var.tcp_protocol
-  cidr_ipv4         = local.sonarqube_allowed_cidr
-}
-
-resource "aws_vpc_security_group_egress_rule" "sonarqube_http_outbound" {
-  count = var.enable_sonarqube ? 1 : 0
-
-  security_group_id = aws_security_group.sonarqube[0].id
-  description       = "Allow security tools package repository HTTP access"
-  from_port         = var.outbound_http_port
-  to_port           = var.outbound_http_port
-  ip_protocol       = var.tcp_protocol
-  cidr_ipv4         = var.security_tools_outbound_cidr_ipv4
-}
-
-resource "aws_vpc_security_group_egress_rule" "sonarqube_https_outbound" {
-  count = var.enable_sonarqube ? 1 : 0
-
-  security_group_id = aws_security_group.sonarqube[0].id
-  description       = "Allow security tools HTTPS access for image pulls and updates"
-  from_port         = var.outbound_https_port
-  to_port           = var.outbound_https_port
-  ip_protocol       = var.tcp_protocol
-  cidr_ipv4         = var.security_tools_outbound_cidr_ipv4
 }
