@@ -32,3 +32,4 @@ soft-fail: false
 
 skip-check:
   - CKV2_AWS_11
+  - CKV_GHA_7

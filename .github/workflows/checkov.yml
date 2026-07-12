@@ -43,6 +43,7 @@ jobs:
 
           docker run --rm \
             -v "${PWD}:/repo" \
+            -w /repo \
             bridgecrew/checkov:latest \
             --config-file /repo/.checkov.yml \
             -o cli \
@@ -90,5 +91,6 @@ jobs:
 
           docker run --rm \
             -v "${PWD}:/repo" \
+            -w /repo \
             bridgecrew/checkov:latest \
             --config-file /repo/.checkov.yml
