@@ -1,0 +1,31 @@
+directory:
+  - .
+
+framework:
+  - terraform
+
+download-external-modules: true
+
+evaluate-variables: true
+
+compact: true
+
+quiet: false
+
+skip-path:
+  - .terraform
+  - node_modules
+  - frontend
+  - backend
+  - "**/examples/**"
+  - "**/test/**"
+
+output:
+  - cli
+  - sarif
+  - json
+
+soft-fail: false
+
+skip-check:
+  - CKV2_AWS_11

@@ -1,0 +1,94 @@
+name: Checkov IaC Scan
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - ".checkov.yml"
+      - ".github/workflows/checkov.yml"
+      - "terraform/**"
+  pull_request:
+    branches:
+      - uat
+      - prod
+    paths:
+      - ".checkov.yml"
+      - ".github/workflows/checkov.yml"
+      - "terraform/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: checkov-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checkov:
+    name: Checkov
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate Checkov reports
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p checkov-reports
+
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            bridgecrew/checkov:latest \
+            --config-file /repo/.checkov.yml \
+            -o cli \
+            -o sarif \
+            -o json \
+            --output-file-path /repo/checkov-reports \
+            --soft-fail
+
+          find checkov-reports -maxdepth 2 -type f -print
+
+      - name: Resolve Checkov SARIF
+        id: checkov_sarif
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SARIF_FILE="$(find checkov-reports -type f \( -name '*.sarif' -o -name '*.sarif.json' \) | head -n 1 || true)"
+          if [[ -z "${SARIF_FILE}" ]]; then
+            echo "::warning::No Checkov SARIF file was found in checkov-reports."
+          else
+            echo "Found Checkov SARIF: ${SARIF_FILE}"
+          fi
+
+          echo "sarif_file=${SARIF_FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Checkov report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-iac-report
+          path: checkov-reports/
+          if-no-files-found: warn
+
+      - name: Upload Checkov SARIF
+        if: always() && steps.checkov_sarif.outputs.sarif_file != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ steps.checkov_sarif.outputs.sarif_file }}
+          category: checkov-iac
+
+      - name: Run Checkov gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -v "${PWD}:/repo" \
+            bridgecrew/checkov:latest \
+            --config-file /repo/.checkov.yml
