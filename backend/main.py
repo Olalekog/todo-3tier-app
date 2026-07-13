@@ -1,11 +1,11 @@
 import os
 import time
-from typing import List
+from typing import Annotated, List
 
 import pymysql
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Path
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 DB_HOST = os.environ["DB_HOST"]
 DB_USER = os.environ.get("DB_USER", "todo_admin")
@@ -26,7 +26,15 @@ app.add_middleware(
 
 
 class TodoCreate(BaseModel):
-    title: str
+    title: str = Field(..., min_length=1, max_length=255)
+
+    @field_validator("title")
+    @classmethod
+    def title_must_not_be_blank(cls, value: str) -> str:
+        title = value.strip()
+        if not title:
+            raise ValueError("Title is required")
+        return title
 
 
 class TodoUpdate(BaseModel):
@@ -155,11 +163,9 @@ def list_todos():
 @app.post("/todos", response_model=Todo)
 def create_todo(todo: TodoCreate):
     ensure_db_initialized(retries=3, delay=2.0)
-    if not todo.title.strip():
-        raise HTTPException(status_code=400, detail="Title is required")
     conn = get_connection()
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO todos (title) VALUES (%s)", (todo.title.strip(),))
+        cur.execute("INSERT INTO todos (title) VALUES (%s)", (todo.title,))
         todo_id = cur.lastrowid
         cur.execute("SELECT id, title, completed FROM todos WHERE id=%s", (todo_id,))
         row = cur.fetchone()
@@ -168,7 +174,7 @@ def create_todo(todo: TodoCreate):
 
 
 @app.put("/todos/{todo_id}", response_model=Todo)
-def update_todo(todo_id: int, update: TodoUpdate):
+def update_todo(todo_id: Annotated[int, Path(gt=0)], update: TodoUpdate):
     ensure_db_initialized(retries=3, delay=2.0)
     conn = get_connection()
     with conn.cursor() as cur:
@@ -182,7 +188,7 @@ def update_todo(todo_id: int, update: TodoUpdate):
 
 
 @app.delete("/todos/{todo_id}")
-def delete_todo(todo_id: int):
+def delete_todo(todo_id: Annotated[int, Path(gt=0)]):
     ensure_db_initialized(retries=3, delay=2.0)
     conn = get_connection()
     with conn.cursor() as cur:
