@@ -95,8 +95,7 @@ flowchart TD
     Plan -->|prod apply| Approval[Prod Approval]
     Plan --> Apply[Terraform Apply]
     Approval --> Apply
-    Apply --> Deploy[Deploy App Containers]
-    Deploy --> Verify[Verify App]
+    Apply --> DeployVerify[Deploy and Verify App Container]
 ```
 
 ## Stage Details
@@ -228,11 +227,18 @@ terraform apply -auto-approve app.tfplan
 
 Using the saved plan keeps the apply stage tied to the reviewed plan output.
 
-### Deploy App Containers
+### Deploy and Verify App Container
 
-This job runs only after a successful apply and only when either the frontend or backend image changed.
+This job runs after a successful apply. It combines the previous deployment and verification behavior into one stage.
 
-It uses AWS Systems Manager to connect to the EC2 instances and restart the affected containers.
+The stage has two vertical parts:
+
+1. Deploy changed containers through SSM.
+2. Verify that the frontend is serving the real React app.
+
+The deploy part only restarts containers when the frontend or backend image changed. The verify part still runs after every successful apply so infrastructure-only changes can be validated too.
+
+It uses AWS Systems Manager to connect to the EC2 instances and restart affected containers.
 
 Frontend deployment behavior:
 
@@ -250,9 +256,7 @@ Backend deployment behavior:
 | Container port | `8000` |
 | Container | FastAPI app |
 
-### Verify App
-
-This job runs after apply. It verifies that the frontend URL is reachable and that the real React app is being served.
+The verification part checks that the frontend URL is reachable and that the real React app is being served.
 
 It also rejects the temporary fallback page. If the frontend host is reachable but the app is not serving correctly, check:
 
