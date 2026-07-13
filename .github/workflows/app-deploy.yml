@@ -329,6 +329,56 @@ jobs:
             -Dsonar.projectKey=${{ env.PROJECT_NAME }}
             -Dsonar.qualitygate.wait=true
 
+      - name: Export SonarQube reports
+        if: always()
+        shell: bash
+        env:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: ${{ env.PROJECT_NAME }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p sonarqube-reports
+
+          if [[ -z "${SONAR_HOST_URL}" || -z "${SONAR_TOKEN}" ]]; then
+            echo "::warning::SONAR_HOST_URL or SONAR_TOKEN is missing; skipping SonarQube report export."
+            exit 0
+          fi
+
+          curl -fsS -u "${SONAR_TOKEN}:" \
+            "${SONAR_HOST_URL%/}/api/issues/search?componentKeys=${SONAR_PROJECT_KEY}&resolved=false&ps=500" \
+            -o sonarqube-reports/issues.json || true
+
+          curl -fsS -u "${SONAR_TOKEN}:" \
+            "${SONAR_HOST_URL%/}/api/qualitygates/project_status?projectKey=${SONAR_PROJECT_KEY}" \
+            -o sonarqube-reports/quality-gate.json || true
+
+          curl -fsS -u "${SONAR_TOKEN}:" \
+            "${SONAR_HOST_URL%/}/api/measures/component?component=${SONAR_PROJECT_KEY}&metricKeys=bugs,vulnerabilities,security_hotspots,code_smells,coverage,duplicated_lines_density,ncloc,reliability_rating,security_rating,sqale_rating" \
+            -o sonarqube-reports/measures.json || true
+
+          if [[ -f .scannerwork/report-task.txt ]]; then
+            cp .scannerwork/report-task.txt sonarqube-reports/report-task.txt
+
+            CE_TASK_ID="$(awk -F= '/^ceTaskId=/{print $2}' .scannerwork/report-task.txt || true)"
+            if [[ -n "${CE_TASK_ID}" ]]; then
+              curl -fsS -u "${SONAR_TOKEN}:" \
+                "${SONAR_HOST_URL%/}/api/ce/task?id=${CE_TASK_ID}" \
+                -o sonarqube-reports/ce-task.json || true
+            fi
+          fi
+
+          find sonarqube-reports -type f -maxdepth 1 -print
+
+      - name: Upload SonarQube reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonarqube-reports
+          path: sonarqube-reports/
+          if-no-files-found: warn
+
       - name: Print SonarQube failure details
         if: failure()
         shell: bash
